@@ -1,13 +1,10 @@
-import os
-
 from rich.table import Table
 
 from .answer import submit_answer
 from .input import get_input
 from .leaderboard import get_leaderboard
-from .models import Leaderboard, OutputFormat, SubmissionResult
+from .models import Leaderboard, OutputFormat, SubmissionResult, YearStatus
 from .status import get_status
-from .utils import resolve_session
 
 
 def get_puzzle_input(year: int, day: int, session: str | None = None) -> str:
@@ -23,7 +20,8 @@ def get_puzzle_input(year: int, day: int, session: str | None = None) -> str:
     year:
         The Advent of Code event year (e.g., ``2024``).
     day:
-        The puzzle day number (``1``–``25``).
+        The puzzle day number (``1``–``25`` for 2015–2024; ``1``–``12``
+        for reduced-format events).
     session:
         An Advent of Code session token. If omitted, the value of the
         ``AOC_SESSION`` environment variable will be used instead.
@@ -45,15 +43,14 @@ def get_puzzle_input(year: int, day: int, session: str | None = None) -> str:
     - This function performs an authenticated HTTP request.
     - Advent of Code input pages are personalized per user.
     """
-    session_token = resolve_session(session)
-    return get_input(year, day, session_token)
+    return get_input(year, day, session)
 
 
 def submit_puzzle_answer(
     year: int,
     day: int,
     part: int,
-    answer: str,
+    answer: int | str,
     session: str | None = None,
 ) -> SubmissionResult:
     """
@@ -72,7 +69,7 @@ def submit_puzzle_answer(
     part:
         The puzzle part (``1`` or ``2``).
     answer:
-        The answer to submit, as a string.
+        The answer to submit, as an integer or string.
     session:
         An Advent of Code session token. If omitted, ``AOC_SESSION`` is used.
 
@@ -93,8 +90,7 @@ def submit_puzzle_answer(
     - Advent of Code enforces a submission cooldown after incorrect answers.
     - This function does **not** retry automatically.
     """
-    session_token = resolve_session(session)
-    return submit_answer(year, day, part, answer, session_token)
+    return submit_answer(year, day, part, answer, session)
 
 
 def get_private_leaderboard(
@@ -129,9 +125,9 @@ def get_private_leaderboard(
 
     Returns
     -------
-    Any
-        A structured leaderboard model, a JSON string, or a formatted
-        table representation, depending on ``fmt``.
+    Leaderboard | str | Table
+        A structured leaderboard model, JSON string, or formatted table,
+        depending on ``fmt``.
 
     Raises
     ------
@@ -150,19 +146,14 @@ def get_private_leaderboard(
     if board_id <= 0:
         raise ValueError("Board ID must be a positive integer.")
 
-    session_token = (
-        resolve_session(session)
-        if view_key is None
-        else session or os.getenv("AOC_SESSION")
-    )
-    return get_leaderboard(year, session_token, board_id, view_key, fmt)
+    return get_leaderboard(year, session, board_id, view_key, fmt)
 
 
 def get_user_status(
     year: int,
     session: str | None = None,
     fmt: OutputFormat = OutputFormat.MODEL,
-):
+) -> YearStatus | str | Table:
     """
     Retrieve the user's Advent of Code progress for the specified year.
 
@@ -181,9 +172,8 @@ def get_user_status(
 
     Returns
     -------
-    Any
-        A ``YearStatus`` model, JSON string, or Rich table depending on
-        ``fmt``.
+    YearStatus | str | Table
+        A status model, JSON string, or Rich table depending on ``fmt``.
 
     Raises
     ------
@@ -195,5 +185,4 @@ def get_user_status(
     - Status is parsed directly from the calendar HTML on the event page.
     - Some features (e.g., star colors) may vary between years.
     """
-    session_token = resolve_session(session)
-    return get_status(year, session_token, fmt)
+    return get_status(year, session, fmt)
