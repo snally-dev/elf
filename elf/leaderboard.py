@@ -1,15 +1,28 @@
 import json
 import os
-from datetime import datetime, timezone
+import time
+import warnings
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import httpx
 from pydantic import ValidationError
 from rich.table import Table
+from rich.text import Text
 
 from .aoc_client import AOCClient
+from .cache import (
+    CacheLockTimeoutError,
+    atomic_write_text,
+    cache_file_lock,
+    get_cache_leaderboard_file,
+)
 from .exceptions import LeaderboardFetchError, MissingSessionTokenError
 from .models import Leaderboard, OutputFormat
 from .utils import handle_http_errors, resolve_session
+
+LEADERBOARD_CACHE_TTL = timedelta(minutes=15)
 
 
 def get_leaderboard(
@@ -37,12 +50,67 @@ def get_leaderboard(
 
     # Resolve session token from explicit arg or environment for consistency with other APIs.
     session_token = (
-        resolve_session(session)
-        if view_key is None
-        else session or os.getenv("AOC_SESSION")
+        resolve_session(session) if view_key is None else session or os.getenv("AOC_SESSION")
     )
     if not session_token and not view_key:
         raise MissingSessionTokenError(env_var="AOC_SESSION")
+
+    cache_file = get_cache_leaderboard_file(
+        year,
+        board_id,
+        session_token=session_token,
+        view_key=view_key,
+    )
+    payload = _read_fresh_cache(cache_file)
+
+    if payload is None:
+        try:
+            with cache_file_lock(cache_file, timeout=60.0, stale_after=120.0):
+                payload = _read_fresh_cache(cache_file)
+                if payload is None:
+                    payload = _fetch_leaderboard_payload(
+                        year=year,
+                        board_id=board_id,
+                        session_token=session_token,
+                        view_key=view_key,
+                    )
+                    try:
+                        atomic_write_text(
+                            cache_file,
+                            json.dumps(payload, separators=(",", ":")),
+                        )
+                    except OSError as exc:
+                        warnings.warn(
+                            f"Could not write leaderboard cache {cache_file}: {exc}",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+        except CacheLockTimeoutError as exc:
+            raise LeaderboardFetchError(
+                "Timed out waiting for another elf process to refresh the leaderboard cache."
+            ) from exc
+
+    leaderboard = _validate_leaderboard(payload)
+
+    match fmt:
+        case OutputFormat.MODEL:
+            return leaderboard
+        case OutputFormat.JSON:
+            return json.dumps(payload, indent=2)
+        case OutputFormat.TABLE:
+            return format_leaderboard_as_table(leaderboard)
+        case _:
+            raise ValueError(f"Unsupported output format: {fmt}")
+
+
+def _fetch_leaderboard_payload(
+    *,
+    year: int,
+    board_id: int,
+    session_token: str | None,
+    view_key: str | None,
+) -> dict[str, Any]:
+    """Fetch and decode a private leaderboard response."""
 
     try:
         with AOCClient(session_token=session_token) as client:
@@ -60,8 +128,13 @@ def get_leaderboard(
         response,
         exc_cls=LeaderboardFetchError,
         not_found_message=f"Leaderboard not found for year={year}, board_id={board_id} (HTTP 404).",
-        bad_request_message="Bad request (HTTP 400). Your session token or view key may be invalid.",
-        server_error_message="Server error from Advent of Code (HTTP {status_code}). Your session token may be invalid.",
+        bad_request_message=(
+            "Bad request (HTTP 400). Your session token or view key may be invalid."
+        ),
+        server_error_message=(
+            "Server error from Advent of Code (HTTP {status_code}). "
+            "Your session token may be invalid."
+        ),
         unexpected_status_message="Unexpected HTTP error: {status_code}.",
     )
 
@@ -72,26 +145,47 @@ def get_leaderboard(
             "Failed to decode leaderboard JSON. Your session/view key may be invalid."
         ) from exc
 
+    if not isinstance(payload, dict):
+        raise LeaderboardFetchError("Unexpected leaderboard schema from Advent of Code.")
+    _validate_leaderboard(payload)
+    return payload
+
+
+def _read_fresh_cache(cache_file: Path) -> dict[str, Any] | None:
+    """Return a valid cache entry within AoC's 15-minute request interval."""
     try:
-        leaderboard = Leaderboard.model_validate(payload)
-    except ValidationError as exc:
+        age_seconds = time.time() - cache_file.stat().st_mtime
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise LeaderboardFetchError(f"Could not inspect leaderboard cache {cache_file}.") from exc
+
+    if age_seconds > LEADERBOARD_CACHE_TTL.total_seconds():
+        return None
+
+    try:
+        payload = json.loads(cache_file.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Leaderboard cache must contain a JSON object.")
+        _validate_leaderboard(payload)
+        return payload
+    except (OSError, ValueError, ValidationError, LeaderboardFetchError) as exc:
         raise LeaderboardFetchError(
-            "Unexpected leaderboard schema from Advent of Code."
+            "The fresh leaderboard cache is unreadable or malformed. "
+            "Elf will not request the leaderboard again within AoC's 15-minute interval; "
+            f"retry after the interval has elapsed. Cache: {cache_file}."
         ) from exc
 
-    match fmt:
-        case OutputFormat.MODEL:
-            return leaderboard
-        case OutputFormat.JSON:
-            return json.dumps(payload, indent=2)
-        case OutputFormat.TABLE:
-            return format_leaderboard_as_table(leaderboard)
-        case _:
-            raise ValueError(f"Unsupported output format: {fmt}")
+
+def _validate_leaderboard(payload: dict[str, Any]) -> Leaderboard:
+    try:
+        return Leaderboard.model_validate(payload)
+    except ValidationError as exc:
+        raise LeaderboardFetchError("Unexpected leaderboard schema from Advent of Code.") from exc
 
 
 def format_leaderboard_as_table(leaderboard: Leaderboard) -> Table:
-    table = Table(title=f"Advent of Code {leaderboard.event} – Private Leaderboard")
+    table = Table(title=Text(f"Advent of Code {leaderboard.event} – Private Leaderboard"))
 
     table.add_column("Rank", justify="right", style="bold")
     table.add_column("Name", style="cyan")
@@ -107,16 +201,14 @@ def format_leaderboard_as_table(leaderboard: Leaderboard) -> Table:
 
     for rank, member in enumerate(members, start=1):
         last_star = (
-            datetime.fromtimestamp(member.last_star_ts, tz=timezone.utc).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+            datetime.fromtimestamp(member.last_star_ts, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
             if member.last_star_ts
             else "-"
         )
 
         table.add_row(
             str(rank),
-            member.name or "<anonymous>",
+            Text(member.name or "<anonymous>"),
             str(member.stars),
             str(member.local_score),
             last_star,
