@@ -1,73 +1,48 @@
 from __future__ import annotations
 
-import atexit
 import os
 import re
 import time
 import warnings
 from types import TracebackType
+from typing import Self
 
 import httpx
 
 from .constants import VERSION
 
-_shared_client: httpx.Client | None = None
-
 _user_agent_prefix = f"elf/{VERSION}"
 _default_user_agent = "+https://github.com/cak/elf"
 
 
-def _get_http_client() -> httpx.Client:
-    """
-    Return a process-global httpx.Client with sane limits/timeouts.
+def _build_http_client() -> httpx.Client:
+    """Create an HTTP client with elf's headers, timeouts, and limits."""
+    user_agent = os.getenv("AOC_USER_AGENT")
+    if user_agent is not None:
+        user_agent = user_agent.replace("\r", "").replace("\n", "").strip()
 
-    The shared client keeps connections warm for CLI calls. If you make
-    heavy concurrent requests from multiple threads, construct your own
-    AOCClient instances to avoid sharing this global session.
-    """
-    global _shared_client
-    if _shared_client is None:
-        user_agent = os.getenv("AOC_USER_AGENT")
+    if not _validate_user_agent(user_agent):
+        if user_agent is None:
+            warning = (
+                "User-Agent should include an email address. "
+                "Please set AOC_USER_AGENT in your environment."
+            )
+        else:
+            warning = (
+                "AOC_USER_AGENT is invalid (value hidden). "
+                "It should include an email address. "
+                "Please set AOC_USER_AGENT in your environment."
+            )
+        warnings.warn(warning, RuntimeWarning, stacklevel=2)
+        user_agent = _default_user_agent
 
-        # Strip whitespace and control characters if present
-        if user_agent is not None:
-            user_agent = user_agent.replace("\r", "").replace("\n", "").strip()
-
-        if not _validate_user_agent(user_agent):
-            # Missing vs invalid message
-            if user_agent is None:
-                warnings.warn(
-                    "User-Agent should include an email address. "
-                    "Please set AOC_USER_AGENT in your environment.",
-                    RuntimeWarning,
-                )
-            else:
-                warnings.warn(
-                    f"Invalid User-Agent header: {user_agent!r}\n\n"
-                    "User-Agent should include an email address. "
-                    "Please set AOC_USER_AGENT in your environment.",
-                    RuntimeWarning,
-                )
-            user_agent = _default_user_agent
-
-        # Ensure user_agent is not None at this point
-        assert user_agent is not None
-
-        _shared_client = httpx.Client(
-            headers={"User-Agent": _construct_user_agent(user_agent)},
-            follow_redirects=True,
-            timeout=httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=20.0),
-            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
-        )
-    return _shared_client
-
-
-def _close_http_client() -> None:
-    if _shared_client is not None:
-        _shared_client.close()
-
-
-atexit.register(_close_http_client)
+    assert user_agent is not None
+    return httpx.Client(
+        headers={"User-Agent": _construct_user_agent(user_agent)},
+        follow_redirects=True,
+        timeout=httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=20.0),
+        limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+    )
 
 
 def _construct_user_agent(user_agent: str) -> str:
@@ -79,22 +54,24 @@ def _validate_user_agent(user_agent: str | None) -> bool:
     Very minimal check that the user agent string contains something that
     looks like an email address so Eric Wastl can contact the user.
     """
-    return (
-        user_agent is not None and re.search(r"[^@]+@[^.]+\..+", user_agent) is not None
-    )
+    return user_agent is not None and re.search(r"[^@]+@[^.]+\..+", user_agent) is not None
 
 
 class AOCClient:
-    def __init__(self, session_token: str | None) -> None:
+    def __init__(
+        self,
+        session_token: str | None,
+        *,
+        http_client: httpx.Client | None = None,
+    ) -> None:
         self.base_url = "https://adventofcode.com"
         self.session_token = session_token
-        self._client = _get_http_client()
+        self._client = http_client if http_client is not None else _build_http_client()
+        self._owns_client = http_client is None
 
     def _get(self, path: str, params: dict[str, str] | None = None) -> httpx.Response:
         cookies = {"session": self.session_token} if self.session_token else None
-        return self._client.get(
-            f"{self.base_url}{path}", params=params, cookies=cookies
-        )
+        return self._client.get(f"{self.base_url}{path}", params=params, cookies=cookies)
 
     def _post(self, path: str, data: dict[str, str]) -> httpx.Response:
         cookies = {"session": self.session_token} if self.session_token else None
@@ -121,7 +98,7 @@ class AOCClient:
                 time.sleep(backoff * (2**attempt))
                 attempt += 1
 
-    def __enter__(self) -> "AOCClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(
@@ -130,8 +107,12 @@ class AOCClient:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        # Shared client is closed via atexit; no-op here to keep connections warm.
-        return None
+        self.close()
+
+    def close(self) -> None:
+        """Close the internally owned HTTP client."""
+        if self._owns_client and not self._client.is_closed:
+            self._client.close()
 
     def fetch_input(self, year: int, day: int) -> httpx.Response:
         """
@@ -139,9 +120,7 @@ class AOCClient:
         """
         return self._get_with_retries(f"/{year}/day/{day}/input")
 
-    def submit_answer(
-        self, year: int, day: int, answer: str, part: int
-    ) -> httpx.Response:
+    def submit_answer(self, year: int, day: int, answer: str, part: int) -> httpx.Response:
         """
         Submit an answer for a specific year, day, and part.
         """
