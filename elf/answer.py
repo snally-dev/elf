@@ -1,12 +1,22 @@
 import csv
-from datetime import datetime, timedelta, timezone
+import io
+import re
+import warnings
+from datetime import UTC, datetime, timedelta
 from enum import Enum, auto
 from html.parser import HTMLParser
 
 import httpx
 
 from .aoc_client import AOCClient
-from .cache import get_cache_guess_file
+from .cache import (
+    CacheLockTimeoutError,
+    atomic_write_text,
+    cache_file_lock,
+    get_cache_guess_file,
+    migrate_legacy_cache_file,
+)
+from .events import validate_event_day
 from .exceptions import PuzzleLockedError, SubmissionError
 from .messages import (
     get_already_completed_message,
@@ -22,9 +32,18 @@ from .messages import (
     get_wrong_level_message,
 )
 from .models import CachedGuessCheck, Guess, SubmissionResult, SubmissionStatus
-from .utils import current_aoc_year, get_unlock_status, read_guesses, resolve_session
+from .utils import (
+    current_aoc_year,
+    get_unlock_status,
+    looks_like_login_content,
+    read_guesses,
+    resolve_session,
+)
 
 WAIT_CACHE_TTL = timedelta(minutes=1)
+_WAIT_TIME_PATTERN = re.compile(r"You have (?:(\d+)m )?(\d+)s left to wait")
+_GUESS_CACHE_FIELDS = ["timestamp", "part", "guess", "status", "retry_at"]
+_REQUIRED_GUESS_CACHE_FIELDS = {"timestamp", "part", "guess", "status"}
 
 
 class AocResponseParser(HTMLParser):
@@ -103,7 +122,8 @@ def submit_answer(
 
     Returns:
         A SubmissionResult describing the outcome, including whether it was
-        served from the local guess cache or from Advent of Code.
+        served from the local guess cache or from Advent of Code. Cooldown
+        results include the exact retry deadline when AoC provides one.
 
     Raises:
         MissingSessionTokenError: If no session token was provided.
@@ -111,11 +131,7 @@ def submit_answer(
     """
     submission_answer, numeric_answer = _normalize_answer(answer)
 
-    if not 1 <= day <= 25:
-        raise ValueError(f"Invalid day {day!r}. Advent of Code days are 1–25.")
-
-    if year < 2015:
-        raise ValueError(f"Invalid year {year!r}. Advent of Code started in 2015.")
+    validate_event_day(year, day)
 
     if level not in (1, 2):
         raise ValueError(f"Invalid level {level!r}. Puzzle parts are 1 or 2.")
@@ -135,29 +151,44 @@ def submit_answer(
 
     session_token = resolve_session(session)
 
-    cache_file = get_cache_guess_file(year, day)
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_cache_file = get_cache_guess_file(year, day)
+    cache_file = get_cache_guess_file(year, day, session_token)
+    try:
+        migrate_legacy_cache_file(legacy_cache_file, cache_file)
+    except OSError as exc:
+        raise SubmissionError(f"Failed to migrate guess cache at {legacy_cache_file}.") from exc
 
-    # Check cached guesses before hitting network
-    if cache_file.exists():
-        cached = check_cached_guesses(
-            year=year,
-            day=day,
-            level=level,
-            answer=submission_answer,
-            numeric_answer=numeric_answer,
-        )
+    # Serialize the cache check and submission for this account and puzzle. This
+    # prevents two elf processes from both submitting before either records the
+    # result. Guess-cache writes use their own shorter-lived lock.
+    submission_lock = cache_file.with_name(f"{cache_file.name}.submission")
+    try:
+        with cache_file_lock(submission_lock, timeout=30.0, stale_after=60.0):
+            if cache_file.exists():
+                cached = check_cached_guesses(
+                    year=year,
+                    day=day,
+                    level=level,
+                    answer=submission_answer,
+                    numeric_answer=numeric_answer,
+                    session_token=session_token,
+                )
 
-        if cached.status != SubmissionStatus.UNKNOWN:
-            return SubmissionResult(
-                guess=submission_answer,
-                result=cached.status,
-                message=cached.message,
-                is_correct=cached.status == SubmissionStatus.CORRECT,
-                is_cached=True,
-            )
+                if cached.status != SubmissionStatus.UNKNOWN:
+                    return SubmissionResult(
+                        guess=submission_answer,
+                        result=cached.status,
+                        message=cached.message,
+                        is_correct=cached.status == SubmissionStatus.CORRECT,
+                        is_cached=True,
+                        retry_at=cached.retry_at,
+                    )
 
-    return submit_to_aoc(year, day, level, submission_answer, session_token)
+            return submit_to_aoc(year, day, level, submission_answer, session_token)
+    except CacheLockTimeoutError as exc:
+        raise SubmissionError(
+            "Timed out waiting for another elf process to finish submitting an answer."
+        ) from exc
 
 
 def submit_to_aoc(
@@ -178,9 +209,7 @@ def submit_to_aoc(
         ) from exc
 
     except httpx.RequestError as exc:
-        raise SubmissionError(
-            f"Network error while connecting to Advent of Code: {exc}"
-        ) from exc
+        raise SubmissionError(f"Network error while connecting to Advent of Code: {exc}") from exc
 
     # --- HTTP status handling -------------------------------------------------
 
@@ -194,25 +223,19 @@ def submit_to_aoc(
 
         else:
             raise SubmissionError(
-                f"Input not found for year={year}, day={day} (HTTP 404)."
+                f"Answer endpoint not found for year={year}, day={day} (HTTP 404)."
             )
 
     if response.status_code == 400:
-        raise SubmissionError(
-            "Bad request (HTTP 400). Your session token may be invalid."
-        )
+        raise SubmissionError("Bad request (HTTP 400). Your session token may be invalid.")
 
     if 500 <= response.status_code < 600:
-        raise SubmissionError(
-            f"Server error from Advent of Code (HTTP {response.status_code}). Your session token may be invalid."
-        )
+        raise SubmissionError(f"Server error from Advent of Code (HTTP {response.status_code}).")
 
     if response.status_code != 200:
-        raise SubmissionError(
-            f"Unexpected HTTP status {response.status_code} from Advent of Code."
-        )
+        raise SubmissionError(f"Unexpected HTTP status {response.status_code} from Advent of Code.")
 
-    if "To play, please identify yourself" in response.text:
+    if looks_like_login_content(response.text):
         raise SubmissionError(
             "Session cookie invalid or expired. "
             "Update AOC_SESSION with a valid 'session' cookie from your browser."
@@ -225,6 +248,7 @@ def submit_to_aoc(
 
     # Determine result type
     message_type = classify_message(content)
+    retry_at: datetime | None = None
     match message_type:
         case AocMessageType.EMPTY:
             message = "Answer submitted, but no response message found."
@@ -239,8 +263,9 @@ def submit_to_aoc(
             message = get_answer_too_low_message(answer)
             status = SubmissionStatus.TOO_LOW
         case AocMessageType.RECENT_SUBMISSION:
-            message = get_recent_submission_message()
             status = SubmissionStatus.WAIT
+            retry_at = _parse_wait_retry_at(content) or datetime.now(UTC) + WAIT_CACHE_TTL
+            message = _wait_message(retry_at, cached=False)
         case AocMessageType.ALREADY_COMPLETED:
             message = get_already_completed_message()
             status = SubmissionStatus.COMPLETED
@@ -254,8 +279,24 @@ def submit_to_aoc(
             message = get_unexpected_response_message()
             status = SubmissionStatus.UNKNOWN
 
-    # Cache the guess (including WAIT, with TTL handling on read)
-    write_guess_cache(year, day, level, answer, status)
+    # The request has already happened, so a local cache failure must not hide
+    # Advent of Code's result and encourage an accidental retry.
+    try:
+        write_guess_cache(
+            year,
+            day,
+            level,
+            answer,
+            status,
+            session_token=session_token,
+            retry_at=retry_at,
+        )
+    except RuntimeError as exc:
+        warnings.warn(
+            f"Answer was submitted, but elf could not update the guess cache: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     return SubmissionResult(
         guess=answer,
@@ -263,6 +304,7 @@ def submit_to_aoc(
         message=message,
         is_correct=status == SubmissionStatus.CORRECT,
         is_cached=False,
+        retry_at=retry_at,
     )
 
 
@@ -272,27 +314,25 @@ def write_guess_cache(
     part: int,
     guess: int | str,
     status: SubmissionStatus,
+    session_token: str | None = None,
+    retry_at: datetime | None = None,
 ) -> None:
-    cache_file = get_cache_guess_file(year, day)
+    cache_file = get_cache_guess_file(year, day, session_token)
 
-    timestamp = datetime.now(timezone.utc).isoformat()
-
+    timestamp = datetime.now(UTC).isoformat()
     canonical_guess, _ = _normalize_answer(guess)
     row = {
         "timestamp": timestamp,
         "part": part,
         "guess": str(canonical_guess),
         "status": status.name,
+        "retry_at": retry_at.isoformat() if retry_at is not None else "",
     }
 
     try:
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        file_exists = cache_file.exists()
-        with cache_file.open("a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=row.keys())
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(row)
+        with cache_file_lock(cache_file, timeout=10.0, stale_after=30.0):
+            existing = cache_file.read_text(encoding="utf-8") if cache_file.exists() else ""
+            atomic_write_text(cache_file, _updated_guess_cache(existing, row))
     except Exception as exc:
         raise RuntimeError(f"Failed to write guess cache {cache_file}: {exc}") from exc
 
@@ -303,43 +343,40 @@ def check_cached_guesses(
     level: int,
     answer: int | str,
     numeric_answer: int | None,
+    session_token: str | None = None,
 ) -> CachedGuessCheck:
-    guesses = read_guesses(year, day)
-    now = datetime.now(timezone.utc)
+    guesses = read_guesses(year, day, session_token=session_token)
+    now = datetime.now(UTC)
 
     highest_low: Guess | None = None
     lowest_high: Guess | None = None
-    completed_guess: Guess | None = None  # NEW
+    completed_guess: Guess | None = None
     wait_guess: Guess | None = None
+    duplicate_guess: Guess | None = None
 
     for g in guesses:
         if g.part != level:
             continue
 
-        # Honor recent WAIT responses for this part
-        if g.status is SubmissionStatus.WAIT and _within_wait_ttl(g.timestamp, now):
+        # A later response supersedes an earlier local cooldown entry.
+        if g.status is SubmissionStatus.WAIT and _wait_is_active(g, now):
             wait_guess = g
-            break
+        elif wait_guess is not None and g.timestamp >= wait_guess.timestamp:
+            wait_guess = None
 
         is_same_guess = g.guess == answer or (
-            numeric_answer is not None
-            and isinstance(g.guess, int)
-            and g.guess == numeric_answer
+            numeric_answer is not None and isinstance(g.guess, int) and g.guess == numeric_answer
         )
 
-        # Prevent repeating guess unless guess response was WAIT
+        # Remember the newest duplicate, but finish scanning so a later
+        # successful solve can take precedence over an older failed guess.
         if is_same_guess and g.status != SubmissionStatus.WAIT:
-            return CachedGuessCheck(
-                guess=answer,
-                previous_guess=g.guess,
-                previous_timestamp=g.timestamp,
-                status=g.status,
-                message=get_cached_duplicate_message(answer, g),
-            )
+            duplicate_guess = g
 
         match g:
-            # Mark that this part is completed (any previous guess)
-            case Guess(status=SubmissionStatus.COMPLETED):
+            # A correct answer proves the part is complete just as surely as a
+            # later "already completed" response.
+            case Guess(status=SubmissionStatus.CORRECT | SubmissionStatus.COMPLETED):
                 completed_guess = g
 
             # Bounds checking (int only)
@@ -358,18 +395,17 @@ def check_cached_guesses(
                 ):
                     lowest_high = g
 
-    # Short-circuit on active cooldown
-    if wait_guess is not None:
-        retry_at = _retry_at(wait_guess.timestamp)
+    # Preserve the familiar result for an exact cached correct answer.
+    if duplicate_guess is not None and duplicate_guess.status is SubmissionStatus.CORRECT:
         return CachedGuessCheck(
             guess=answer,
-            previous_guess=None,
-            previous_timestamp=wait_guess.timestamp,
-            status=SubmissionStatus.WAIT,
-            message=_wait_cache_message(retry_at),
+            previous_guess=duplicate_guess.guess,
+            previous_timestamp=duplicate_guess.timestamp,
+            status=duplicate_guess.status,
+            message=get_cached_duplicate_message(answer, duplicate_guess),
         )
 
-    # If we know this part is completed, short-circuit before bounds logic
+    # Completion supersedes earlier cooldown, duplicate, and bounds entries.
     if completed_guess is not None:
         return CachedGuessCheck(
             guess=answer,
@@ -377,6 +413,26 @@ def check_cached_guesses(
             previous_timestamp=completed_guess.timestamp,
             status=SubmissionStatus.COMPLETED,
             message=get_already_completed_message(),
+        )
+
+    if wait_guess is not None:
+        retry_at = _retry_at(wait_guess)
+        return CachedGuessCheck(
+            guess=answer,
+            previous_guess=None,
+            previous_timestamp=wait_guess.timestamp,
+            status=SubmissionStatus.WAIT,
+            message=_wait_message(retry_at, cached=True),
+            retry_at=retry_at,
+        )
+
+    if duplicate_guess is not None:
+        return CachedGuessCheck(
+            guess=answer,
+            previous_guess=duplicate_guess.guess,
+            previous_timestamp=duplicate_guess.timestamp,
+            status=duplicate_guess.status,
+            message=get_cached_duplicate_message(answer, duplicate_guess),
         )
 
     # Infer bounds
@@ -393,9 +449,7 @@ def check_cached_guesses(
                     message=get_cached_low_message(answer, h_low),
                 )
             case (_, l_high) if (
-                l_high
-                and isinstance(l_high.guess, int)
-                and numeric_answer >= l_high.guess
+                l_high and isinstance(l_high.guess, int) and numeric_answer >= l_high.guess
             ):
                 return CachedGuessCheck(
                     guess=answer,
@@ -415,23 +469,78 @@ def check_cached_guesses(
     )
 
 
-def _retry_at(ts: datetime) -> datetime:
-    ts_aware = ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
-    return ts_aware + WAIT_CACHE_TTL
+def _updated_guess_cache(existing: str, row: dict[str, object]) -> str:
+    """Append a row while upgrading old four-column CSV files safely."""
+    fieldnames = list(_GUESS_CACHE_FIELDS)
+    existing_rows: list[dict[str, str | None]] = []
+
+    if existing:
+        reader = csv.DictReader(io.StringIO(existing, newline=""))
+        existing_fields = reader.fieldnames
+        if (
+            existing_fields is None
+            or len(existing_fields) != len(set(existing_fields))
+            or not _REQUIRED_GUESS_CACHE_FIELDS.issubset(existing_fields)
+        ):
+            raise ValueError("Guess cache has a malformed header; refusing to overwrite it.")
+        fieldnames = list(existing_fields)
+        if "retry_at" not in fieldnames:
+            fieldnames.append("retry_at")
+        for existing_row in reader:
+            if None in existing_row:
+                raise ValueError("Guess cache has a malformed row; refusing to overwrite it.")
+            existing_rows.append(existing_row)
+
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(existing_rows)
+    writer.writerow(row)
+    return buffer.getvalue()
 
 
-def _within_wait_ttl(ts: datetime, now: datetime) -> bool:
-    return _retry_at(ts) > now
+def _parse_wait_retry_at(content: str, *, now: datetime | None = None) -> datetime | None:
+    match = _WAIT_TIME_PATTERN.search(content)
+    if match is None:
+        return None
+    minutes = int(match.group(1) or 0)
+    seconds = int(match.group(2))
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return current + timedelta(minutes=minutes, seconds=seconds)
 
 
-def _wait_cache_message(retry_at: datetime) -> str:
-    retry_str = retry_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    return f"{get_recent_submission_message()} Cached locally; try again after {retry_str}."
+def _retry_at(guess: Guess) -> datetime:
+    if guess.retry_at is not None:
+        return (
+            guess.retry_at
+            if guess.retry_at.tzinfo is not None
+            else guess.retry_at.replace(tzinfo=UTC)
+        )
+    timestamp = (
+        guess.timestamp
+        if guess.timestamp.tzinfo is not None
+        else guess.timestamp.replace(tzinfo=UTC)
+    )
+    return timestamp + WAIT_CACHE_TTL
+
+
+def _wait_is_active(guess: Guess, now: datetime) -> bool:
+    return _retry_at(guess) > now
+
+
+def _wait_message(retry_at: datetime, *, cached: bool) -> str:
+    retry_str = retry_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    source = "Cached locally; " if cached else ""
+    return f"{get_recent_submission_message()} {source}try again after {retry_str}."
 
 
 def _normalize_answer(answer: int | str) -> tuple[int | str, int | None]:
     """
-    Preserve the user's answer text but still provide a numeric variant for bounds/duplicate guardrails.
+    Preserve answer text while providing a numeric variant for duplicate and bounds
+    guardrails.
+
     Returns (submission_answer, numeric_answer).
     """
     if isinstance(answer, str):
