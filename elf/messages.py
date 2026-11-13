@@ -47,7 +47,9 @@ def get_cached_low_message(
 ) -> str:
     """User guessed too low and we know their previous highest “too low” guess."""
     time_str = highest_low_guess.timestamp.strftime("%B %d at %I:%M %p")
-    return f"{answer} is still too low. Your highest low was {highest_low_guess.guess} on {time_str}."
+    return (
+        f"{answer} is still too low. Your highest low was {highest_low_guess.guess} on {time_str}."
+    )
 
 
 def get_cached_high_message(
