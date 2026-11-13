@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum, auto
-from typing import Dict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,7 +32,7 @@ class Member(BaseModel):
     last_star_ts: int
     stars: int
     local_score: int
-    completion_day_level: Dict[int, Dict[int, StarCompletion]] = Field(
+    completion_day_level: dict[int, dict[int, StarCompletion]] = Field(
         default_factory=dict,
         description="Mapping of day -> part -> StarCompletion.",
     )
@@ -49,27 +48,7 @@ class Leaderboard(BaseModel):
     day1_ts: int
     owner_id: int
     # member_id -> Member (keys in JSON are numeric strings; parsed as ints)
-    members: Dict[int, Member]
-
-
-@dataclass(frozen=True, slots=True)
-class TestResult:
-    part: int
-    passed: bool
-    expected: str
-    actual: str
-    message: str
-
-    def __repr__(self):
-        return (
-            f"TestResult(\n"
-            f"  part={self.part},\n"
-            f"  passed={self.passed},\n"
-            f"  expected='{self.expected}',\n"
-            f"  actual='{self.actual}',\n"
-            f"  message='{self.message}'\n"
-            f")"
-        )
+    members: dict[int, Member]
 
 
 class SubmissionStatus(StrEnum):
@@ -84,20 +63,24 @@ class SubmissionStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class SubmissionResult:
+    """Outcome of an answer attempt, including a cooldown deadline when applicable."""
+
     guess: int | str
     result: SubmissionStatus
     message: str
     is_correct: bool
     is_cached: bool
+    retry_at: datetime | None = None
 
     def __repr__(self):
         return (
             f"SubmissionResult(\n"
-            f"  guess={self.guess},\n"
+            f"  guess={self.guess!r},\n"
             f"  result={self.result.name},\n"
             f"  is_correct={self.is_correct},\n"
             f"  is_cached={self.is_cached},\n"
-            f"  message='{self.message}'\n"
+            f"  retry_at={self.retry_at!r},\n"
+            f"  message={self.message!r}\n"
             f")"
         )
 
@@ -108,16 +91,7 @@ class Guess:
     part: int
     guess: int | str
     status: SubmissionStatus
-
-    def is_too_low(self, answer: int | str) -> bool:
-        if isinstance(self.guess, int) and isinstance(answer, int):
-            return self.guess < answer and self.status == SubmissionStatus.TOO_LOW
-        return False
-
-    def is_too_high(self, answer: int | str) -> bool:
-        if isinstance(self.guess, int) and isinstance(answer, int):
-            return self.guess > answer and self.status == SubmissionStatus.TOO_HIGH
-        return False
+    retry_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +101,7 @@ class CachedGuessCheck:
     previous_timestamp: datetime | None
     status: SubmissionStatus
     message: str
+    retry_at: datetime | None = None
 
 
 @dataclass(slots=True)
