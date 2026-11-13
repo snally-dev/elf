@@ -5,6 +5,7 @@ import httpx
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from rich.table import Table
+from rich.text import Text
 
 from .aoc_client import AOCClient
 from .exceptions import StatusFetchError
@@ -12,16 +13,12 @@ from .models import DayStatus, OutputFormat, YearStatus
 from .utils import current_aoc_year, handle_http_errors, resolve_session
 
 
-def get_status(
-    year: int, session: str | None, fmt: OutputFormat
-) -> YearStatus | str | Table:
+def get_status(year: int, session: str | None, fmt: OutputFormat) -> YearStatus | str | Table:
     session_token = resolve_session(session)
 
     now_year = current_aoc_year()
     if year > now_year:
-        raise ValueError(
-            f"Invalid year {year!r}. Advent of Code years are up to {now_year}."
-        )
+        raise ValueError(f"Invalid year {year!r}. Advent of Code years are up to {now_year}.")
     if year < 2015:
         raise ValueError(f"Invalid year {year!r}. Advent of Code started in 2015.")
 
@@ -42,7 +39,10 @@ def get_status(
         exc_cls=StatusFetchError,
         not_found_message=f"Event page not found for year={year} (HTTP 404).",
         bad_request_message="Bad request (HTTP 400). Your session token may be invalid.",
-        server_error_message="Server error from Advent of Code (HTTP {status_code}). Your session token may be invalid.",
+        server_error_message=(
+            "Server error from Advent of Code (HTTP {status_code}). "
+            "Your session token may be invalid."
+        ),
         unexpected_status_message="Unexpected HTTP error: {status_code}.",
     )
 
@@ -132,6 +132,15 @@ def _stars_from_aria_and_classes(
     return 0
 
 
+def _element_classes(element: Tag) -> list[str]:
+    classes = element.get("class")
+    if isinstance(classes, str):
+        return classes.split()
+    if isinstance(classes, list):
+        return [str(value) for value in classes]
+    return []
+
+
 def _parse_day_status(element: Tag, *, is_locked: bool) -> DayStatus | None:
     aria_label = element.get("aria-label", "") or ""
     aria_label_str = str(aria_label) if aria_label else None
@@ -152,11 +161,7 @@ def _parse_day_status(element: Tag, *, is_locked: bool) -> DayStatus | None:
     href_raw = element.get("href", "")
     href = str(href_raw) if href_raw else ""
 
-    classes = element.get("class") or []
-    if isinstance(classes, str):
-        classes = classes.split()
-    elif not isinstance(classes, list):
-        classes = list(classes) if classes else []
+    classes = _element_classes(element)
     stars = _stars_from_aria_and_classes(aria_label_str, classes)
 
     return DayStatus(
@@ -192,15 +197,14 @@ def parse_year_status(html: str) -> YearStatus:
 
     day_statuses: list[DayStatus] = []
 
-    # Each unlocked day is an <a> with class "calendar-dayN"
-    for a in calendar.select("a[class^='calendar-day']"):
-        day_status = _parse_day_status(a, is_locked=False)
-        if day_status:
-            day_statuses.append(day_status)
-
-    # Each locked day is an <span> with class "calendar-dayN"
-    for span in calendar.select("span[class^='calendar-day']"):
-        day_status = _parse_day_status(span, is_locked=True)
+    # Match the numbered container class explicitly so parsing does not depend
+    # on CSS class order and does not mistake a nested ``span.calendar-day``
+    # label for another day.
+    for element in calendar.find_all(["a", "span"]):
+        classes = _element_classes(element)
+        if not any(re.fullmatch(r"calendar-day\d+", value) for value in classes):
+            continue
+        day_status = _parse_day_status(element, is_locked=element.name == "span")
         if day_status:
             day_statuses.append(day_status)
 
@@ -221,7 +225,10 @@ def build_year_status_table(status: YearStatus) -> Table:
     Build a Rich Table summarizing a user's AoC progress for a year.
     """
     supporter_suffix = " (AoC++)" if status.is_supporter else ""
-    title = f"Advent of Code {status.year} – {status.username}{supporter_suffix} [{status.total_stars}⭐]"
+    title = Text(
+        f"Advent of Code {status.year} – {status.username}{supporter_suffix} "
+        f"[{status.total_stars}⭐]"
+    )
 
     table = Table(title=title, show_lines=False)
 
@@ -230,9 +237,7 @@ def build_year_status_table(status: YearStatus) -> Table:
 
     for day in sorted(status.days, key=lambda d: d.day):
         # Render stars as a 2-star gauge: ★ for earned, ☆ for missing
-        stars_str = (
-            "★" * day.stars + "☆" * (2 - day.stars) if not day.is_locked else "🔒"
-        )
+        stars_str = "★" * day.stars + "☆" * (2 - day.stars) if not day.is_locked else "🔒"
 
         # Row coloring based on completion
         if day.stars == 2:
@@ -254,9 +259,4 @@ def parse_login_state(html: str) -> bool:
     has_login = "/auth/login" in html
     has_settings = "/settings" in html
 
-    # Logged in = settings visible AND login missing
-    if has_settings and not has_login:
-        return True
-
-    # Otherwise assume logged out
-    return False
+    return has_settings and not has_login
