@@ -89,15 +89,26 @@ def test_leaderboard_cmd_forwards_options(monkeypatch):
     assert captured["fmt"] == OutputFormat.JSON
 
 
+def test_json_output_is_not_interpreted_as_rich_markup(monkeypatch):
+    payload = '{"name": "[red]literal[/red]"}'
+    monkeypatch.setattr("elf.cli.get_leaderboard", lambda *args, **kwargs: payload)
+
+    result = runner.invoke(
+        app,
+        ["leaderboard", "2024", "12345", "--view-key", "secret", "--format", "json"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == f"{payload}\n"
+
+
 def test_status_cmd_outputs(monkeypatch):
     def fake_get_status(year, session, fmt):
         return f"status-{year}-{fmt.value}"
 
     monkeypatch.setattr("elf.cli.get_status", fake_get_status)
 
-    result = runner.invoke(
-        app, ["status", "2023", "--format", "table", "--session", "token"]
-    )
+    result = runner.invoke(app, ["status", "2023", "--format", "table", "--session", "token"])
     assert result.exit_code == 0
     assert "status-2023-table" in result.stdout
 
@@ -113,7 +124,7 @@ def test_cache_cmd_handles_empty_dir(monkeypatch, tmp_path):
 
 
 def test_guesses_cmd_invokes_reader(monkeypatch):
-    monkeypatch.setattr("elf.cli.get_guesses", lambda year, day: "guess-history")
+    monkeypatch.setattr("elf.cli.get_guesses", lambda year, day, session: "guess-history")
 
     result = runner.invoke(app, ["guesses", "2024", "3"])
 

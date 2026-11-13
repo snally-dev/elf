@@ -57,6 +57,7 @@ def test_write_guess_cache_normalizes_guess(monkeypatch, tmp_path):
             "part": "1",
             "guess": "123",
             "status": "INCORRECT",
+            "retry_at": "",
         }
     ]
 

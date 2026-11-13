@@ -3,7 +3,6 @@ import os
 import httpx
 import pytest
 
-import elf.aoc_client
 from elf.aoc_client import (
     AOCClient,
     _default_user_agent,
@@ -13,9 +12,8 @@ from elf.aoc_client import (
 
 
 @pytest.fixture
-def aoc_client(monkeypatch):
+def aoc_client():
     def _make():
-        monkeypatch.setattr(elf.aoc_client, "_shared_client", None)
         return AOCClient("fake_session")
 
     return _make
@@ -39,14 +37,12 @@ def test_user_agent_set_in_AOCClient(monkeypatch, aoc_client):
     user_agent_header = httpx_client.headers.get("User-Agent", "")
     assert user_agent in user_agent_header
     assert _user_agent_prefix in user_agent_header
+    client.close()
 
 
 def test_default_user_agent_set_in_AOCClient(monkeypatch, aoc_client):
     # Simulate no AOC_USER_AGENT set in the environment so we hit the default UA path
     monkeypatch.delenv("AOC_USER_AGENT", raising=False)
-
-    # Ensure we get a fresh client instead of reusing a previously-initialized one
-    monkeypatch.setattr(elf.aoc_client, "_shared_client", None)
 
     with pytest.warns(RuntimeWarning):
         client = aoc_client()
@@ -55,3 +51,35 @@ def test_default_user_agent_set_in_AOCClient(monkeypatch, aoc_client):
     user_agent_header = httpx_client.headers.get("User-Agent", "")
     assert _default_user_agent in user_agent_header
     assert _user_agent_prefix in user_agent_header
+    client.close()
+
+
+def test_invalid_user_agent_warning_does_not_echo_value(monkeypatch, aoc_client):
+    secret = "not-an-email-secret-value"
+    monkeypatch.setenv("AOC_USER_AGENT", secret)
+
+    with pytest.warns(RuntimeWarning) as warning_list:
+        client = aoc_client()
+
+    assert secret not in str(warning_list[0].message)
+    client.close()
+
+
+def test_context_manager_closes_owned_client(monkeypatch):
+    monkeypatch.setenv("AOC_USER_AGENT", "valid@email.com")
+
+    with AOCClient("fake_session") as client:
+        assert client._client.is_closed is False
+
+    assert client._client.is_closed is True
+
+
+def test_injected_http_client_is_not_closed(monkeypatch):
+    monkeypatch.setenv("AOC_USER_AGENT", "valid@email.com")
+    transport = httpx.Client()
+
+    with AOCClient("fake_session", http_client=transport):
+        pass
+
+    assert transport.is_closed is False
+    transport.close()
