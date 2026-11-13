@@ -38,9 +38,7 @@ def timer(
             if enabled:
                 end_time = time.perf_counter()
                 duration = end_time - start_time if start_time is not None else 0.0
-                message = (
-                    f"⏱️ Function '{func.__name__}' took {duration:.6f}s to complete 🎅."
-                )
+                message = f"⏱️ Function '{func.__name__}' took {duration:.6f}s to complete 🎅."
                 if logger:
                     logger(message)
                 else:
@@ -55,8 +53,6 @@ def timer(
 def read_input(path: Path) -> str:
     """Read input from a file and return its contents."""
     if not path.is_file():
-        raise FileNotFoundError(
-            f"Input file not found: {path}. Please add the missing file."
-        )
+        raise FileNotFoundError(f"Input file not found: {path}. Please add the missing file.")
 
     return path.read_text(encoding="utf-8").strip()
