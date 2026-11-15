@@ -54,7 +54,7 @@ elf = "elf.cli:main"
 include = ["elf*"]
 
 [tool.setuptools.package-data]
-elf = ["py.typed"]
+elf = ["py.typed", "templates/*.py"]
 
 [build-system]
 requires = ["setuptools>=77", "wheel"]
