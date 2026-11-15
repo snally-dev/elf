@@ -9,6 +9,8 @@ Notable user-facing changes to elf are documented here.
 - Calendar-aware defaults for archived, active, and reduced-length Advent of Code events.
 - Persistent private-leaderboard caching with the required 15-minute refresh interval.
 - `elf doctor` for offline configuration, version, clock, and cache diagnostics.
+- `elf new YEAR DAY` for safe creation of interactive Python puzzle files with `# %%` cells.
+- First-star leaderboard timestamps and deterministic one-row-per-member CSV exports.
 - Account-scoped input and submission caches, atomic writes, private permissions, and safe legacy-cache migration.
 - Cross-process protection for leaderboard refreshes, guess history, and answer submission.
 - Exact server-provided submission cooldown deadlines, exposed as `SubmissionResult.retry_at`.
