@@ -14,6 +14,9 @@ from .utils import current_aoc_year, handle_http_errors, resolve_session
 
 
 def get_status(year: int, session: str | None, fmt: OutputFormat) -> YearStatus | str | Table:
+    if fmt == OutputFormat.CSV:
+        raise ValueError("CSV output is only supported for private leaderboards.")
+
     session_token = resolve_session(session)
 
     now_year = current_aoc_year()

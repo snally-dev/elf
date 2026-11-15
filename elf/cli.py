@@ -1,5 +1,6 @@
 from enum import Enum
 from functools import wraps
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -17,6 +18,7 @@ from .input import get_input
 from .leaderboard import get_leaderboard
 from .models import OpenKind, OutputFormat, SubmissionStatus
 from .open import open_page
+from .scaffold import create_day_template
 from .status import get_status
 
 app = typer.Typer(
@@ -117,6 +119,14 @@ SessionOpt = Annotated[
         "-s",
         help="Advent of Code session cookie",
         envvar="AOC_SESSION",
+    ),
+]
+OutputPathOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--output",
+        "-o",
+        help="Destination path (defaults to YEAR/dayDD.py)",
     ),
 ]
 
@@ -304,6 +314,18 @@ def open_cmd(
     """
     open_msg = open_page(year, day or default_event_day(year), kind)
     console.print(open_msg)
+
+
+@app.command("new")
+@handle_cli_errors
+def new_cmd(
+    year: RequiredYearArg,
+    day: DayArg,
+    output: OutputPathOpt = None,
+) -> None:
+    """Create an interactive Python solution file for a puzzle."""
+    destination = create_day_template(year, day, output)
+    console.print(Text(f"Created {destination}", style="green"))
 
 
 @app.command("cache")
