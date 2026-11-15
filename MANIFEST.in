@@ -1,2 +1,3 @@
+include CHANGELOG.md
 include tests/conftest.py
 recursive-include tests/fixtures *.html
