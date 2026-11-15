@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -196,7 +197,7 @@ def test_new_cmd_creates_template_and_refuses_overwrite(monkeypatch, tmp_path):
     duplicate = runner.invoke(app, ["new", "2025", "1"])
 
     assert created.exit_code == 0
-    assert "Created 2025/day01.py" in created.stdout
+    assert f"Created {Path('2025') / 'day01.py'}" in created.stdout
     assert (tmp_path / "2025" / "day01.py").is_file()
     assert customized.exit_code == 0
     assert (tmp_path / "solutions" / "custom.py").is_file()
