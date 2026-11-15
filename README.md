@@ -29,7 +29,7 @@ If Advent of Code is part of your December ritual too, I hope this little elf ma
 
 - Fetch inputs instantly with **automatic caching**
 - Submit answers safely with **smart guardrails** (duplicate, low, high, locked, cooldown)
-- Explore private leaderboards as **tables**, **JSON**, or **Pydantic models**
+- Explore private leaderboards as **tables**, **CSV**, **JSON**, or **Pydantic models**
 - View your **status calendar** (table, JSON, or model)
 - Inspect your **guess history** with timestamps and per-part details
 - Diagnose local configuration safely with **`elf doctor`**
@@ -265,12 +265,13 @@ Usage: elf leaderboard YEAR BOARD_ID
 Options:
   --view-key TEXT
   --session TEXT
-  --format table|json|model
+  --format table|csv|json|model
 ```
 
 Supports:
 
 - **table:** pretty Rich table
+- **csv:** one summary row per member
 - **json:** raw JSON
 - **model:** structured Pydantic model
 
@@ -401,13 +402,13 @@ from elf.helpers import parse_input, read_input, timer
 ```sh
 ❯ elf leaderboard 2025 3913340
               Advent of Code 2025 – Private Leaderboard
-┏━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓
-┃ Rank ┃ Name           ┃ Stars ┃ Local Score ┃ Last Star (UTC)     ┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩
-│    1 │ User A         │    24 │         900 │ 2025-12-12 00:53:17 │
-│    2 │ User B         │    24 │         855 │ 2025-12-12 00:53:56 │
-│    3 │ User C         │    18 │         622 │ 2025-12-12 03:29:21 │
-└──────┴────────────────┴───────┴─────────────┴─────────────────────┘
+┏━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓
+┃ Rank ┃ Name   ┃ Stars ┃ Local Score ┃ First Star (UTC)    ┃ Last Star (UTC)     ┃
+┡━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩
+│    1 │ User A │    24 │         900 │ 2025-12-01 00:04:21 │ 2025-12-12 00:53:17 │
+│    2 │ User B │    24 │         855 │ 2025-12-01 00:05:02 │ 2025-12-12 00:53:56 │
+│    3 │ User C │    18 │         622 │ 2025-12-01 00:07:45 │ 2025-12-12 03:29:21 │
+└──────┴────────┴───────┴─────────────┴─────────────────────┴─────────────────────┘
 ```
 
 JSON format:
@@ -422,6 +423,27 @@ Model format (Pydantic):
 lb = get_private_leaderboard(2025, board_id=3982840, fmt=OutputFormat.MODEL)
 members = sorted(lb.members.values(), key=lambda m: (-m.local_score, -m.stars))
 print(members[0].name, members[0].stars)
+```
+
+### Exporting Leaderboard Data
+
+CSV provides one summary row per member for tabular analysis. JSON preserves the complete Advent of Code response, including individual star completions. The Python model remains available for more advanced processing, and all formats work with any tool that understands standard CSV or JSON.
+
+```sh
+elf leaderboard 2025 123456 --format csv > leaderboard.csv
+elf leaderboard 2025 123456 --format json > leaderboard.json
+```
+
+```python
+from elf import OutputFormat, get_private_leaderboard
+
+csv_data = get_private_leaderboard(
+    2025, board_id=123456, fmt=OutputFormat.CSV
+)
+
+json_data = get_private_leaderboard(
+    2025, board_id=123456, fmt=OutputFormat.JSON
+)
 ```
 
 ### Status Example
