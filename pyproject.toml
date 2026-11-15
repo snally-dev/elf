@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.12.4",
     "rich>=14.2.0",
     "typer>=0.20.0",
+    "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 keywords = [
@@ -44,6 +45,7 @@ Homepage = "https://github.com/cak/elf"
 Documentation = "https://github.com/cak/elf/"
 Repository = "https://github.com/cak/elf"
 Issue-Tracker = "https://github.com/cak/elf/issues"
+Changelog = "https://github.com/cak/elf/blob/main/CHANGELOG.md"
 
 [project.scripts]
 elf = "elf.cli:main"
