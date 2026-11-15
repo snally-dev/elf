@@ -1,3 +1,7 @@
+import csv
+import io
+import json
+
 from typer.testing import CliRunner
 
 from elf.cli import app
@@ -100,6 +104,46 @@ def test_json_output_is_not_interpreted_as_rich_markup(monkeypatch):
 
     assert result.exit_code == 0
     assert result.stdout == f"{payload}\n"
+    assert json.loads(result.stdout) == {"name": "[red]literal[/red]"}
+
+
+def test_csv_output_is_raw_machine_readable_data(monkeypatch):
+    payload = 'name,stars\n"[red]Elf, One[/red]",2\n'
+    monkeypatch.setattr("elf.cli.get_leaderboard", lambda *args, **kwargs: payload)
+
+    result = runner.invoke(
+        app,
+        ["leaderboard", "2025", "12345", "--view-key", "secret", "--format", "csv"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == payload
+    assert list(csv.DictReader(io.StringIO(result.stdout))) == [
+        {"name": "[red]Elf, One[/red]", "stars": "2"}
+    ]
+
+
+def test_leaderboard_authentication_errors_stay_on_stderr(monkeypatch):
+    monkeypatch.delenv("AOC_SESSION", raising=False)
+
+    result = runner.invoke(app, ["leaderboard", "2025", "12345", "--format", "csv"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "AOC_SESSION" in result.stderr
+
+
+def test_status_rejects_csv_without_advertising_it():
+    help_result = runner.invoke(app, ["status", "--help"])
+    csv_result = runner.invoke(
+        app,
+        ["status", "2025", "--session", "token", "--format", "csv"],
+    )
+
+    assert help_result.exit_code == 0
+    assert "csv" not in help_result.stdout.lower()
+    assert csv_result.exit_code == 2
+    assert "invalid value" in csv_result.stderr.lower()
 
 
 def test_status_cmd_outputs(monkeypatch):
