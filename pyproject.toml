@@ -41,11 +41,11 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cak/elf"
-Documentation = "https://github.com/cak/elf/"
-Repository = "https://github.com/cak/elf"
-Issue-Tracker = "https://github.com/cak/elf/issues"
-Changelog = "https://github.com/cak/elf/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/snally-dev/elf"
+Documentation = "https://github.com/snally-dev/elf/"
+Repository = "https://github.com/snally-dev/elf"
+Issue-Tracker = "https://github.com/snally-dev/elf/issues"
+Changelog = "https://github.com/snally-dev/elf/blob/main/CHANGELOG.md"
 
 [project.scripts]
 elf = "elf.cli:main"
