@@ -105,8 +105,8 @@ def get_private_leaderboard(
 
     Private leaderboards allow groups to track each other's progress. This
     function fetches the leaderboard’s current state and optionally formats it
-    as a Python object, JSON string, or a human-readable representation. You
-    can provide either a session token (full access) or just a view key
+    as a Python object, CSV or JSON string, or a human-readable representation.
+    You can provide either a session token (full access) or just a view key
     (read-only share link).
 
     Parameters
@@ -121,12 +121,12 @@ def get_private_leaderboard(
         The read-only “share code” for the leaderboard. When present, a session
         token is optional.
     fmt:
-        The desired output format (``MODEL`` | ``JSON`` | ``TABLE``).
+        The desired output format (``MODEL`` | ``CSV`` | ``JSON`` | ``TABLE``).
 
     Returns
     -------
     Leaderboard | str | Table
-        A structured leaderboard model, JSON string, or formatted table,
+        A structured leaderboard model, CSV or JSON string, or formatted table,
         depending on ``fmt``.
 
     Raises
