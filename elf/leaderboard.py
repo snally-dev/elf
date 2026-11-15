@@ -1,8 +1,10 @@
+import csv
 import json
 import os
 import time
 import warnings
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,7 @@ from .cache import (
     get_cache_leaderboard_file,
 )
 from .exceptions import LeaderboardFetchError, MissingSessionTokenError
-from .models import Leaderboard, OutputFormat
+from .models import Leaderboard, Member, OutputFormat
 from .utils import handle_http_errors, resolve_session
 
 LEADERBOARD_CACHE_TTL = timedelta(minutes=15)
@@ -97,6 +99,8 @@ def get_leaderboard(
             return leaderboard
         case OutputFormat.JSON:
             return json.dumps(payload, indent=2)
+        case OutputFormat.CSV:
+            return format_leaderboard_as_csv(leaderboard, year=year, board_id=board_id)
         case OutputFormat.TABLE:
             return format_leaderboard_as_table(leaderboard)
         case _:
@@ -184,6 +188,77 @@ def _validate_leaderboard(payload: dict[str, Any]) -> Leaderboard:
         raise LeaderboardFetchError("Unexpected leaderboard schema from Advent of Code.") from exc
 
 
+def _first_star_timestamp(member: Member) -> int | None:
+    """Return the member's earliest star completion timestamp, if any."""
+    return min(
+        (
+            completion.get_star_ts
+            for parts in member.completion_day_level.values()
+            for completion in parts.values()
+        ),
+        default=None,
+    )
+
+
+def _format_utc_timestamp(timestamp: int | None) -> str:
+    if not timestamp:
+        return "-"
+    return datetime.fromtimestamp(timestamp, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_csv_timestamp(timestamp: int | None) -> str:
+    if not timestamp:
+        return ""
+    return datetime.fromtimestamp(timestamp, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ranked_members(leaderboard: Leaderboard) -> list[Member]:
+    return sorted(
+        leaderboard.members.values(),
+        key=lambda member: (-member.local_score, -member.stars, member.id),
+    )
+
+
+def format_leaderboard_as_csv(
+    leaderboard: Leaderboard,
+    *,
+    year: int,
+    board_id: int,
+) -> str:
+    """Serialize one deterministic summary row per leaderboard member."""
+    output = StringIO(newline="")
+    fieldnames = (
+        "year",
+        "board_id",
+        "rank",
+        "member_id",
+        "name",
+        "stars",
+        "local_score",
+        "first_star_utc",
+        "last_star_utc",
+    )
+    writer = csv.DictWriter(output, fieldnames=fieldnames, lineterminator="\n")
+    writer.writeheader()
+
+    for rank, member in enumerate(_ranked_members(leaderboard), start=1):
+        writer.writerow(
+            {
+                "year": year,
+                "board_id": board_id,
+                "rank": rank,
+                "member_id": member.id,
+                "name": member.name or "<anonymous>",
+                "stars": member.stars,
+                "local_score": member.local_score,
+                "first_star_utc": _format_csv_timestamp(_first_star_timestamp(member)),
+                "last_star_utc": _format_csv_timestamp(member.last_star_ts),
+            }
+        )
+
+    return output.getvalue()
+
+
 def format_leaderboard_as_table(leaderboard: Leaderboard) -> Table:
     table = Table(title=Text(f"Advent of Code {leaderboard.event} – Private Leaderboard"))
 
@@ -191,27 +266,17 @@ def format_leaderboard_as_table(leaderboard: Leaderboard) -> Table:
     table.add_column("Name", style="cyan")
     table.add_column("Stars", justify="right", style="yellow")
     table.add_column("Local Score", justify="right", style="green")
+    table.add_column("First Star (UTC)", style="magenta")
     table.add_column("Last Star (UTC)", style="magenta")
 
-    # sort: highest local_score, then highest stars
-    members = sorted(
-        leaderboard.members.values(),
-        key=lambda m: (-m.local_score, -m.stars, m.id),
-    )
-
-    for rank, member in enumerate(members, start=1):
-        last_star = (
-            datetime.fromtimestamp(member.last_star_ts, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
-            if member.last_star_ts
-            else "-"
-        )
-
+    for rank, member in enumerate(_ranked_members(leaderboard), start=1):
         table.add_row(
             str(rank),
             Text(member.name or "<anonymous>"),
             str(member.stars),
             str(member.local_score),
-            last_star,
+            _format_utc_timestamp(_first_star_timestamp(member)),
+            _format_utc_timestamp(member.last_star_ts),
         )
 
     return table
