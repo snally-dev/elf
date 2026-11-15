@@ -123,7 +123,7 @@ If this variable is not set or does not look like an email address, elf falls ba
 Your User-Agent header will look like `elf/<version> (you@example.com)`.
 This helps Eric identify the person sending the traffic while still including the library name.
 
-If the warning fires, elf instead sends `elf/<version> (+https://github.com/cak/elf)` so AoC still sees a recognizable identifier even without your email.
+If the warning fires, elf instead sends `elf/<version> (+https://github.com/snally-dev/elf)` so AoC still sees a recognizable identifier even without your email.
 
 ## Quick Start
 
@@ -393,7 +393,7 @@ print(status)
 
 ### Interactive Puzzle Template
 
-Create a solution file from elf's [interactive template](https://github.com/cak/elf/blob/main/elf/templates/day_template.py):
+Create a solution file from elf's [interactive template](https://github.com/snally-dev/elf/blob/main/elf/templates/day_template.py):
 
 ```sh
 elf new 2025 1
@@ -458,13 +458,9 @@ elf leaderboard 2025 123456 --format json > leaderboard.json
 ```python
 from elf import OutputFormat, get_private_leaderboard
 
-csv_data = get_private_leaderboard(
-    2025, board_id=123456, fmt=OutputFormat.CSV
-)
+csv_data = get_private_leaderboard(2025, board_id=123456, fmt=OutputFormat.CSV)
 
-json_data = get_private_leaderboard(
-    2025, board_id=123456, fmt=OutputFormat.JSON
-)
+json_data = get_private_leaderboard(2025, board_id=123456, fmt=OutputFormat.JSON)
 ```
 
 ### Status Example
