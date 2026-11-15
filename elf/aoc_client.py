@@ -12,7 +12,7 @@ import httpx
 from .constants import VERSION
 
 _user_agent_prefix = f"elf/{VERSION}"
-_default_user_agent = "+https://github.com/cak/elf"
+_default_user_agent = "+https://github.com/snally-dev/elf"
 
 
 def _build_http_client() -> httpx.Client:
