@@ -115,6 +115,7 @@ class OutputFormat(str, Enum):
     MODEL = "model"
     TABLE = "table"
     JSON = "json"
+    CSV = "csv"
 
 
 class OpenKind(str, Enum):
