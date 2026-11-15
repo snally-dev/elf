@@ -30,6 +30,7 @@ If Advent of Code is part of your December ritual too, I hope this little elf ma
 - Fetch inputs instantly with **automatic caching**
 - Submit answers safely with **smart guardrails** (duplicate, low, high, locked, cooldown)
 - Explore private leaderboards as **tables**, **CSV**, **JSON**, or **Pydantic models**
+- Start interactive puzzle files with **`# %%` code cells** using **`elf new`**
 - View your **status calendar** (table, JSON, or model)
 - Inspect your **guess history** with timestamps and per-part details
 - Diagnose local configuration safely with **`elf doctor`**
@@ -167,6 +168,7 @@ Commands:
   guesses      Show cached guesses
   status       Show yearly star status
   open         Open puzzle/input/website
+  new          Create an interactive Python solution file
   cache        Show cache information
   doctor       Check local configuration without contacting Advent of Code
 ```
@@ -388,6 +390,25 @@ leaderboard = get_private_leaderboard(
 status = get_user_status(2023, fmt=OutputFormat.TABLE)
 print(status)
 ```
+
+### Interactive Puzzle Template
+
+Create a solution file from elf's [interactive template](https://github.com/cak/elf/blob/main/elf/templates/day_template.py):
+
+```sh
+elf new 2025 1
+elf new 2025 2 --output solutions/2025/day02.py
+```
+
+By default this creates `YEAR/dayDD.py`; parent directories are created as needed, and elf refuses to overwrite an existing path. Configure `AOC_SESSION` as described above, open the generated file in Positron, VS Code, Spyder, or another Python editor, and run the `# %%` cells from top to bottom. The first input cell retrieves the puzzle input through elf's private, account-scoped cache instead of writing input into your project tree. `raw`, `lines`, `data`, `part1_answer`, and `part2_answer` remain at module scope so they appear in the active session's Variables pane and can be inspected between runs.
+
+The same file works as a normal script:
+
+```sh
+python 2025/day01.py
+```
+
+Running it in a separate terminal process does not populate an IDE's existing interactive session because the Variables pane reflects only its active Python process. Answer submission is intentionally commented out in the final cell; run a submission line manually only after checking the corresponding answer.
 
 ### Puzzle Helpers
 
