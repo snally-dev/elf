@@ -1,4 +1,4 @@
-from elf.models import OutputFormat, SubmissionResult, SubmissionStatus
+from elf.models import DayStatus, OutputFormat, SubmissionResult, SubmissionStatus
 
 
 def test_output_format_members_cover_known_values():
@@ -8,6 +8,12 @@ def test_output_format_members_cover_known_values():
         OutputFormat.MODEL,
         OutputFormat.TABLE,
     }
+
+
+def test_day_status_new_field_is_backward_compatible():
+    status = DayStatus(day=1, stars=2, href="/2025/day/1", aria_label="Day 1, two stars")
+
+    assert status.is_locked is False
 
 
 def test_submission_status_has_known_members():

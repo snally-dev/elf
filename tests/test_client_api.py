@@ -100,3 +100,10 @@ def test_get_user_status_forwards_session_and_default_format(monkeypatch):
         (2023, "manual-session", OutputFormat.JSON),
         (2024, None, OutputFormat.MODEL),
     ]
+
+
+def test_status_csv_is_rejected_before_authentication(monkeypatch):
+    monkeypatch.delenv("AOC_SESSION", raising=False)
+
+    with pytest.raises(ValueError, match="only supported for private leaderboards"):
+        get_user_status(2025, fmt=OutputFormat.CSV)

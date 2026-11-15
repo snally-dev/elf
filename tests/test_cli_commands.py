@@ -183,3 +183,23 @@ def test_open_cmd_prints_message(monkeypatch):
 
     assert result.exit_code == 0
     assert "opened" in result.stdout
+
+
+def test_new_cmd_creates_template_and_refuses_overwrite(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+
+    created = runner.invoke(app, ["new", "2025", "1"])
+    customized = runner.invoke(
+        app,
+        ["new", "2025", "2", "--output", "solutions/custom.py"],
+    )
+    duplicate = runner.invoke(app, ["new", "2025", "1"])
+
+    assert created.exit_code == 0
+    assert "Created 2025/day01.py" in created.stdout
+    assert (tmp_path / "2025" / "day01.py").is_file()
+    assert customized.exit_code == 0
+    assert (tmp_path / "solutions" / "custom.py").is_file()
+    assert duplicate.exit_code == 1
+    assert duplicate.stdout == ""
+    assert "Refusing to overwrite" in duplicate.stderr

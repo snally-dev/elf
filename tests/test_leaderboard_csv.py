@@ -45,7 +45,7 @@ def _payload():
             },
             "10": {
                 "id": 10,
-                "name": 'Doe, "Elf"\nJr.',
+                "name": 'Døe, "Elf" 🎄\nJr.',
                 "last_star_ts": 1765005300,
                 "stars": 3,
                 "local_score": 100,
@@ -91,7 +91,7 @@ def test_csv_schema_values_escaping_and_deterministic_sorting():
     assert fieldnames == CSV_FIELDS
     assert [row["member_id"] for row in rows] == ["1", "10", "5", "20", "30"]
     assert [row["rank"] for row in rows] == ["1", "2", "3", "4", "5"]
-    assert rows[1]["name"] == 'Doe, "Elf"\nJr.'
+    assert rows[1]["name"] == 'Døe, "Elf" 🎄\nJr.'
     assert rows[1]["first_star_utc"] == "2025-12-01T05:10:00Z"
     assert rows[1]["last_star_utc"] == "2025-12-06T07:15:00Z"
     assert rows[2]["first_star_utc"] == ""
