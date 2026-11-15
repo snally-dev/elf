@@ -29,9 +29,11 @@ If Advent of Code is part of your December ritual too, I hope this little elf ma
 
 - Fetch inputs instantly with **automatic caching**
 - Submit answers safely with **smart guardrails** (duplicate, low, high, locked, cooldown)
-- Explore private leaderboards as **tables**, **JSON**, or **Pydantic models**
+- Explore private leaderboards as **tables**, **CSV**, **JSON**, or **Pydantic models**
+- Start interactive puzzle files with **`# %%` code cells** using **`elf new`**
 - View your **status calendar** (table, JSON, or model)
 - Inspect your **guess history** with timestamps and per-part details
+- Diagnose local configuration safely with **`elf doctor`**
 - Open any AoC page (puzzle, input, or website) straight from the CLI
 - Use elf as a **CLI tool** or a full **Python API**
 
@@ -108,24 +110,27 @@ Set your email address in the environment variable `AOC_USER_AGENT`:
 
 ```sh
 export AOC_USER_AGENT="you@example.com"
+```
+
 Windows PowerShell:
+
+```powershell
 $env:AOC_USER_AGENT = "you@example.com"
 setx AOC_USER_AGENT "you@example.com"
 ```
 
 If this variable is not set or does not look like an email address, elf falls back to a safe default and prints a warning.
-Your User-Agent header will look like:
-elf/<version> (you@example.com)
+Your User-Agent header will look like `elf/<version> (you@example.com)`.
 This helps Eric identify the person sending the traffic while still including the library name.
 
-If the warning fires, elf instead sends `elf/<version> (+https://github.com/cak/elf)` so AoC still sees a recognizable identifier even without your email.
+If the warning fires, elf instead sends `elf/<version> (+https://github.com/snally-dev/elf)` so AoC still sees a recognizable identifier even without your email.
 
 ## Quick Start
 
 ```sh
 export AOC_SESSION="your-session-token"
 
-elf input        # fetch today's input
+elf input        # fetch the latest relevant puzzle input
 elf answer 2025 1 1 123 # submit answer for part 1
 elf status       # view progress
 elf leaderboard 2025 123456 --view-key ABCDEF
@@ -136,7 +141,7 @@ elf leaderboard 2025 123456 --view-key ABCDEF
 If you prefer to keep your own local copies of puzzle inputs, elf works just like a regular Unix command. You can redirect the output to save any day's input:
 
 ```sh
-elf input > input.txt              # save today's input
+elf input > input.txt              # save the default event/day input
 elf input 2025 2 > day02.txt       # save a specific day's input
 ```
 
@@ -163,7 +168,9 @@ Commands:
   guesses      Show cached guesses
   status       Show yearly star status
   open         Open puzzle/input/website
+  new          Create an interactive Python solution file
   cache        Show cache information
+  doctor       Check local configuration without contacting Advent of Code
 ```
 
 Enable detailed tracebacks with `--debug` or `ELF_DEBUG=1` when troubleshooting.
@@ -185,9 +192,11 @@ Options:
 
 Defaults:
 
-- `year`: current year
-- `day`: current day in December, otherwise 1 (Dec 1)
-- Caches to `~/.cache/elf/<year>/<day>/input.txt` (or platform equivalent)
+- In December, `year` and `day` follow the active event (capped at its final day).
+- Outside December, they select the final day of the latest completed event.
+- An explicitly selected archived year defaults to that event's final day.
+- Events from 2015 through 2024 have 25 days; the reduced format from 2025 onward has 12.
+- Explicit `year` and `day` arguments always take precedence.
 
 ### `elf answer`
 
@@ -205,7 +214,8 @@ Behaviors:
 - Year and day are required to avoid accidental submissions.
 - Detects locked puzzles (future days or future years) and shows unlock timestamp.
 - Identifies too high / too low / duplicate guesses from local cache
-- Caches cooldown responses locally for ~60 seconds to avoid hammering the site
+- Honors and persists AoC's exact cooldown deadline; falls back to 60 seconds if the response format is unfamiliar
+- Never sleeps or automatically retries a submission—you remain in control of every POST
 - Writes to guess cache automatically (per part)
 
 Exit codes:
@@ -214,7 +224,7 @@ Exit codes:
 - `2` when AoC rate-limits you (cooldown/WAIT)
 - `1` for incorrect/too-high/too-low/unknown guesses
 
-Duplicate guesses reuse cached submissions, so the exit code follows the cached result: e.g., a cached correct/completed guess still exits `0`, while cached incorrect/high/low responses return `1`.
+Duplicate guesses reuse cached submissions, so the exit code follows the cached result: e.g., a cached correct/completed guess still exits `0`, while cached incorrect/high/low responses return `1`. A cooldown returns the exact UTC retry time when AoC provides one.
 
 Example errors:
 
@@ -231,9 +241,13 @@ Display local guess history (per part). Requires a cached `guesses.csv` from pre
 
 ```sh
 Usage: elf guesses [YEAR] [DAY]
+
+Options:
+  --session TEXT  Select the account cache (env: AOC_SESSION)
 ```
 
 `elf guesses` loads its data solely from the local `guesses.csv`; it never reaches out to AoC and does not require `AOC_SESSION`, so it works offline as long as the cache already exists.
+If more than one account has cached guesses for the same puzzle, set `AOC_SESSION` or pass `--session` so elf can select the right private cache.
 
 Example table:
 
@@ -253,14 +267,17 @@ Usage: elf leaderboard YEAR BOARD_ID
 Options:
   --view-key TEXT
   --session TEXT
-  --format table|json|model
+  --format table|csv|json|model
 ```
 
 Supports:
 
 - **table:** pretty Rich table
+- **csv:** one summary row per member
 - **json:** raw JSON
 - **model:** structured Pydantic model
+
+Leaderboard JSON is cached for 15 minutes, matching Advent of Code's minimum request interval. Cache entries are isolated by event, leaderboard ID, and a one-way fingerprint of the session cookie or view key.
 
 ### `elf status`
 
@@ -276,7 +293,7 @@ Options:
 
 Defaults:
 
-- `year`: current year if omitted
+- `year`: the active event during December, otherwise the latest completed event
 
 Prints stars for each day.
 
@@ -305,22 +322,45 @@ Shows:
 - Number of cached files
 - Reminder to delete the directory manually to clear cache
 
+### `elf doctor`
+
+Run local diagnostics without contacting Advent of Code:
+
+```sh
+elf doctor
+```
+
+The report includes the installed version, AoC clock and resolved default puzzle,
+whether session and User-Agent variables are configured, and whether the cache is
+writable with private permissions. Credential values are never printed. Warnings
+do not fail the command; cache-access errors return exit code `1`.
+
 ---
 
 ## Caching Behavior
 
 - Default cache dir: macOS/Linux `~/.cache/elf`, Windows `%LOCALAPPDATA%\elf`
 - Override location with `ELF_CACHE_DIR` (respects `XDG_CACHE_HOME` on Linux)
-- Inputs stored under: `<cache>/<year>/<day>/input.txt`
-- Guess history stored as `<cache>/<year>/<day>/guesses.csv`
+- Inputs and guesses are isolated by a one-way account fingerprint; session cookies are never written to disk or included in paths
+- Inputs stored under: `<cache>/accounts/<fingerprint>/<year>/<day>/input.txt`
+- Guess history stored under: `<cache>/accounts/<fingerprint>/<year>/<day>/guesses.csv`
+- Private leaderboard JSON is scoped by event, board ID, and account/view-key fingerprint and cached for at least 15 minutes
+- New cache files use private permissions where supported and are replaced atomically to avoid partial files after interruption
+- Cross-process lock files prevent concurrent leaderboard refreshes and lost guess-history writes; abandoned locks expire safely
 - Duplicate/high/low guesses are short‑circuited locally when possible
-- Cooldown responses are cached locally for ~60 seconds to avoid hammering AoC
+- Cooldown responses retain AoC's server-provided retry deadline; historical entries without one use a 60-second fallback
 - Guardrails rely on your local guess history only (new machines/cleared cache = fresh)
 - Delete the cache directory to clear everything
 
+### Upgrading existing caches
+
+Elf 1.2 preserves the original unscoped `<cache>/<year>/<day>/` files. On first authenticated use, each legacy file is copied into the current account's private namespace and marked as claimed; it is never deleted or copied into a second account. If an old cache belongs to a different AoC account, set the intended account's session before first accessing that puzzle. The original file remains available for manual recovery.
+
+Existing four-column `guesses.csv` files are upgraded in place on the next write by adding an optional `retry_at` column. Historical rows and original timestamps are preserved. Because cache namespaces intentionally use a session-cookie fingerprint, a replacement cookie starts a new namespace rather than risking cross-account data sharing; older caches remain untouched.
+
 ### Concurrency note
 
-The library reuses a process-global `httpx.Client` to keep CLI calls fast. For heavy multi-threaded usage, create separate `elf.aoc_client.AOCClient` instances per thread to avoid sharing the global session.
+Each internal `AOCClient` owns and closes its `httpx.Client` when used as a context manager. Advanced callers can inject an existing `httpx.Client` to control connection pooling and lifecycle; injected clients are never closed by elf.
 
 ---
 
@@ -340,6 +380,8 @@ input_text = get_puzzle_input(2023, 5)
 
 result = submit_puzzle_answer(2023, 5, 1, "12345")
 print(result.is_correct, result.message)
+if result.retry_at:
+    print("Try again after", result.retry_at)
 
 leaderboard = get_private_leaderboard(
     2023, session=None, board_id=123456, view_key=None, fmt=OutputFormat.MODEL
@@ -349,12 +391,31 @@ status = get_user_status(2023, fmt=OutputFormat.TABLE)
 print(status)
 ```
 
+### Interactive Puzzle Template
+
+Create a solution file from elf's [interactive template](https://github.com/snally-dev/elf/blob/main/elf/templates/day_template.py):
+
+```sh
+elf new 2025 1
+elf new 2025 2 --output solutions/2025/day02.py
+```
+
+By default this creates `YEAR/dayDD.py`; parent directories are created as needed, and elf refuses to overwrite an existing path. Configure `AOC_SESSION` as described above, open the generated file in Positron, VS Code, Spyder, or another Python editor, and run the `# %%` cells from top to bottom. The first input cell retrieves the puzzle input through elf's private, account-scoped cache instead of writing input into your project tree. `raw`, `lines`, `data`, `part1_answer`, and `part2_answer` remain at module scope so they appear in the active session's Variables pane and can be inspected between runs.
+
+The same file works as a normal script:
+
+```sh
+python 2025/day01.py
+```
+
+Running it in a separate terminal process does not populate an IDE's existing interactive session because the Variables pane reflects only its active Python process. Answer submission is intentionally commented out in the final cell; run a submission line manually only after checking the corresponding answer.
+
 ### Puzzle Helpers
 
 `elf.helpers` includes some small utilities you can use in your own AoC solutions:
 
 ```python
-from elf.helpers import parse_input, read_test_input, timer
+from elf.helpers import parse_input, read_input, timer
 ```
 
 ### Leaderboard Example
@@ -362,13 +423,13 @@ from elf.helpers import parse_input, read_test_input, timer
 ```sh
 ❯ elf leaderboard 2025 3913340
               Advent of Code 2025 – Private Leaderboard
-┏━━━━━━┳━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓
-┃ Rank ┃ Name           ┃ Stars ┃ Local Score ┃ Last Star (UTC)     ┃
-┡━━━━━━╇━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩
-│    1 │ User A         │    45 │         900 │ 2025-12-26 00:53:17 │
-│    2 │ User B         │    45 │         855 │ 2025-12-26 00:53:56 │
-│    3 │ User C         │    36 │         622 │ 2025-12-26 03:29:21 │
-└──────┴────────────────┴───────┴─────────────┴─────────────────────┘
+┏━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓
+┃ Rank ┃ Name   ┃ Stars ┃ Local Score ┃ First Star (UTC)    ┃ Last Star (UTC)     ┃
+┡━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩
+│    1 │ User A │    24 │         900 │ 2025-12-01 00:04:21 │ 2025-12-12 00:53:17 │
+│    2 │ User B │    24 │         855 │ 2025-12-01 00:05:02 │ 2025-12-12 00:53:56 │
+│    3 │ User C │    18 │         622 │ 2025-12-01 00:07:45 │ 2025-12-12 03:29:21 │
+└──────┴────────┴───────┴─────────────┴─────────────────────┴─────────────────────┘
 ```
 
 JSON format:
@@ -383,6 +444,23 @@ Model format (Pydantic):
 lb = get_private_leaderboard(2025, board_id=3982840, fmt=OutputFormat.MODEL)
 members = sorted(lb.members.values(), key=lambda m: (-m.local_score, -m.stars))
 print(members[0].name, members[0].stars)
+```
+
+### Exporting Leaderboard Data
+
+CSV provides one summary row per member for tabular analysis. JSON preserves the complete Advent of Code response, including individual star completions. The Python model remains available for more advanced processing, and all formats work with any tool that understands standard CSV or JSON.
+
+```sh
+elf leaderboard 2025 123456 --format csv > leaderboard.csv
+elf leaderboard 2025 123456 --format json > leaderboard.json
+```
+
+```python
+from elf import OutputFormat, get_private_leaderboard
+
+csv_data = get_private_leaderboard(2025, board_id=123456, fmt=OutputFormat.CSV)
+
+json_data = get_private_leaderboard(2025, board_id=123456, fmt=OutputFormat.JSON)
 ```
 
 ### Status Example
@@ -433,13 +511,24 @@ Run the test suite via:
 uv run pytest
 ```
 
+Run the complete local quality pass via:
+
+```sh
+uv run ruff check elf tests
+uv run ruff format --check elf tests
+uv run mypy
+uv build
+```
+
+GitHub Actions runs the full Python 3.11–3.14 suite on Linux, plus Python 3.14 smoke jobs on macOS and Windows. Tests block external network access, mock every Advent of Code interaction, and never fetch inputs or submit answers.
+
 Alternatively, you can still run:
 
 ```sh
 python -m pytest
 ```
 
-Running `python -m pytest` directly requires `pytest` to be installed in your environment. Install it via `pip install pytest>=9.0.1` (or use `uv run pytest` / `pip install .[dev]` if you maintain the dev extras) before running the command outside of `uv`.
+Running `python -m pytest` directly requires `pytest` to be installed in your environment. Install it via `pip install pytest>=9.0.1` (or use `uv sync --group dev` and `uv run pytest`) before running the command outside of `uv`.
 
 ## Special Thanks
 

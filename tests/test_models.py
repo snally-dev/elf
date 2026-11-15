@@ -1,13 +1,19 @@
-from elf.models import OutputFormat, SubmissionResult, SubmissionStatus
+from elf.models import DayStatus, OutputFormat, SubmissionResult, SubmissionStatus
 
 
 def test_output_format_members_cover_known_values():
-    # Your existing code uses TABLE, JSON, and MODEL.
-    members = {fmt for fmt in OutputFormat}
-    assert OutputFormat.JSON in members
-    assert OutputFormat.MODEL in members
-    # TABLE may or may not be used in the CLI yet, but it exists.
-    assert OutputFormat.TABLE in members
+    assert set(OutputFormat) == {
+        OutputFormat.CSV,
+        OutputFormat.JSON,
+        OutputFormat.MODEL,
+        OutputFormat.TABLE,
+    }
+
+
+def test_day_status_new_field_is_backward_compatible():
+    status = DayStatus(day=1, stars=2, href="/2025/day/1", aria_label="Day 1, two stars")
+
+    assert status.is_locked is False
 
 
 def test_submission_status_has_known_members():

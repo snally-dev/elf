@@ -1,25 +1,46 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
 from rich.console import Group
 from rich.table import Table
 from rich.text import Text
 
-from .cache import get_cache_guess_file
+from .cache import get_cache_dir, get_cache_guess_file
 from .exceptions import ElfError
 from .models import Guess, SubmissionStatus
 from .utils import read_guesses
 
 
-def get_guesses(year: int, day: int) -> Group:
-    cache_file = get_cache_guess_file(year, day)
+def get_guesses(year: int, day: int, session: str | None = None) -> Group:
+    cache_file = _resolve_guess_file(year, day, session)
     if not cache_file.exists():
         raise ElfError(
             f"No cached guesses found yet for {year}-12-{day:02d}. "
             "Submit an answer before viewing guess history."
         )
-    cached_guesses = read_guesses(year, day)
+    cached_guesses = read_guesses(year, day, session_token=session, cache_file=cache_file)
 
     return render_guess_tables(cached_guesses)
+
+
+def _resolve_guess_file(year: int, day: int, session: str | None) -> Path:
+    if session:
+        return get_cache_guess_file(year, day, session)
+
+    legacy_file = get_cache_guess_file(year, day)
+    if legacy_file.exists():
+        return legacy_file
+
+    pattern = f"accounts/*/{year:04d}/{day:02d}/guesses.csv"
+    matches = list(get_cache_dir().glob(pattern))
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ElfError(
+            "Guess history exists for multiple accounts. "
+            "Set AOC_SESSION or pass --session to choose one."
+        )
+    return legacy_file
 
 
 def render_guess_tables(guesses: list[Guess]) -> Group:
@@ -56,7 +77,12 @@ def _render_single_table(guesses: list[Guess], title: str) -> Table:
         elif guess.status is SubmissionStatus.INCORRECT:
             status_text = Text("Incorrect", style="red")
         elif guess.status is SubmissionStatus.WAIT:
-            status_text = Text("Wait", style="magenta")
+            if guess.retry_at is None:
+                label = "Wait"
+            else:
+                retry_at = _ensure_aware(guess.retry_at).strftime("%H:%M:%S UTC")
+                label = f"Wait until {retry_at}"
+            status_text = Text(label, style="magenta")
         elif guess.status is SubmissionStatus.TOO_HIGH:
             status_text = Text("Too High", style="purple")
         elif guess.status is SubmissionStatus.TOO_LOW:
@@ -64,7 +90,7 @@ def _render_single_table(guesses: list[Guess], title: str) -> Table:
         else:
             status_text = Text(guess.status.value)
 
-        table.add_row(ts, str(guess.guess), status_text)
+        table.add_row(ts, Text(str(guess.guess)), status_text)
 
     return table
 
@@ -72,5 +98,5 @@ def _render_single_table(guesses: list[Guess], title: str) -> Table:
 def _ensure_aware(dt: datetime) -> datetime:
     """Make any datetime UTC-aware."""
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)

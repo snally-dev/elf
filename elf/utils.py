@@ -1,18 +1,26 @@
 import csv
 import os
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 
 from .cache import get_cache_guess_file
 from .constants import AOC_TZ
+from .events import validate_event_day
 from .exceptions import ElfError, MissingSessionTokenError
 from .models import Guess, SubmissionStatus, UnlockStatus
 
 
-def read_guesses(year: int, day: int) -> list[Guess]:
-    cache_file = get_cache_guess_file(year, day)
+def read_guesses(
+    year: int,
+    day: int,
+    session_token: str | None = None,
+    *,
+    cache_file: Path | None = None,
+) -> list[Guess]:
+    cache_file = cache_file or get_cache_guess_file(year, day, session_token)
     if not cache_file.exists():
         return []
 
@@ -25,15 +33,10 @@ def read_guesses(year: int, day: int) -> list[Guess]:
             for row in reader:
                 try:
                     status_raw = (row.get("status") or "UNKNOWN").upper()
-                    status = SubmissionStatus.__members__.get(
-                        status_raw, SubmissionStatus.UNKNOWN
-                    )
+                    status = SubmissionStatus.__members__.get(status_raw, SubmissionStatus.UNKNOWN)
 
                     guess_raw = row.get("guess", "")
-                    if isinstance(guess_raw, str):
-                        guess_str = guess_raw.strip()
-                    else:
-                        guess_str = str(guess_raw)
+                    guess_str = guess_raw.strip() if isinstance(guess_raw, str) else str(guess_raw)
 
                     if guess_str.lstrip("+-").isdigit():
                         guess_val: int | str = int(guess_str)
@@ -41,16 +44,12 @@ def read_guesses(year: int, day: int) -> list[Guess]:
                         guess_val = guess_str
 
                     timestamp_raw = row.get("timestamp", "") or ""
-                    try:
-                        if timestamp_raw:
-                            timestamp = datetime.fromisoformat(timestamp_raw)
-                            # Normalize to tz-aware (assume UTC if missing)
-                            if timestamp.tzinfo is None:
-                                timestamp = timestamp.replace(tzinfo=timezone.utc)
-                        else:
-                            timestamp = datetime.now(timezone.utc)
-                    except Exception:
-                        timestamp = datetime.now(timezone.utc)
+                    timestamp = _parse_cache_datetime(timestamp_raw)
+                    if timestamp is None:
+                        timestamp = datetime.fromtimestamp(0, UTC)
+
+                    retry_at_raw = row.get("retry_at", "") or ""
+                    retry_at = _parse_cache_datetime(retry_at_raw)
 
                     part_raw = row.get("part")
                     if part_raw is None:
@@ -62,9 +61,10 @@ def read_guesses(year: int, day: int) -> list[Guess]:
                             part=int(part_raw),
                             guess=guess_val,
                             status=status,
+                            retry_at=retry_at,
                         )
                     )
-                except Exception:
+                except (TypeError, ValueError, OverflowError):
                     skipped_rows += 1
                     continue
     except Exception as exc:
@@ -85,6 +85,16 @@ def read_guesses(year: int, day: int) -> list[Guess]:
     return sorted_guesses
 
 
+def _parse_cache_datetime(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (ValueError, OverflowError):
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 def current_aoc_year() -> int:
     """Return the current year in the AoC timezone."""
     return datetime.now(tz=AOC_TZ).year
@@ -96,9 +106,7 @@ def get_unlock_status(year: int, day: int) -> UnlockStatus:
 
     AoC unlocks each day at midnight local time (Y-12-D 00:00 in America/New_York).
     """
-    if not 1 <= day <= 25:
-        # Let existing validation handle out-of-range days elsewhere
-        raise ValueError(f"Invalid day {day!r}. Advent of Code days are 1–25.")
+    validate_event_day(year, day)
 
     # Current time in AoC timezone
     now = datetime.now(tz=AOC_TZ)
@@ -164,10 +172,14 @@ def looks_like_login_page(response: httpx.Response) -> bool:
     if "text/plain" in content_type:
         return False
 
-    html = response.text
+    return looks_like_login_content(response.text)
+
+
+def looks_like_login_content(content: str) -> bool:
+    """Detect AoC authentication HTML in a response or historical cache file."""
     markers = (
         "To play, please identify yourself",
         "/auth/login",
         'name="session"',
     )
-    return any(marker in html for marker in markers)
+    return any(marker in content for marker in markers)

@@ -1,19 +1,24 @@
-from datetime import datetime
+from enum import Enum
 from functools import wraps
+from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.text import Text
 
 from .answer import submit_answer
 from .cache import get_cache_dir
-from .constants import AOC_TZ, VERSION
+from .constants import VERSION
+from .doctor import format_doctor_report, run_doctor
+from .events import default_event_day, default_event_year
 from .exceptions import ElfError
 from .guesses import get_guesses
 from .input import get_input
 from .leaderboard import get_leaderboard
 from .models import OpenKind, OutputFormat, SubmissionStatus
 from .open import open_page
+from .scaffold import create_day_template
 from .status import get_status
 
 app = typer.Typer(
@@ -27,13 +32,18 @@ error_console = Console(stderr=True)
 _DEBUG = False
 
 
+def _print_formatted_output(data: object, output_format: OutputFormat) -> None:
+    """Print machine-readable strings without Rich interpretation."""
+    if output_format is OutputFormat.CSV and isinstance(data, str):
+        typer.echo(data, nl=False)
+    elif output_format is OutputFormat.JSON and isinstance(data, str):
+        typer.echo(data)
+    else:
+        console.print(data)
+
+
 def _current_year() -> int:
-    return datetime.now(tz=AOC_TZ).year
-
-
-def _current_day() -> int:
-    today = datetime.now(tz=AOC_TZ)
-    return min(today.day, 25) if today.month == 12 else 1
+    return default_event_year()
 
 
 YearArg = Annotated[
@@ -44,13 +54,27 @@ YearArg = Annotated[
         default_factory=_current_year,
     ),
 ]
+RequiredYearArg = Annotated[
+    int,
+    typer.Argument(
+        help="Year of the Advent of Code event (2015 or later)",
+        min=2015,
+    ),
+]
 DayArg = Annotated[
     int,
     typer.Argument(
-        help="Day of the event (1–25)",
+        help="Day of the selected event",
         min=1,
         max=25,
-        default_factory=_current_day,
+    ),
+]
+DefaultDayArg = Annotated[
+    int | None,
+    typer.Argument(
+        help="Day of the selected event (defaults to its latest relevant day)",
+        min=1,
+        max=25,
     ),
 ]
 PartArg = Annotated[
@@ -62,8 +86,25 @@ PartArg = Annotated[
     ),
 ]
 AnswerArg = Annotated[str, typer.Argument(help="Your answer to submit")]
-FormatOpt = Annotated[
+
+
+class _StatusOutputFormat(str, Enum):
+    MODEL = OutputFormat.MODEL.value
+    TABLE = OutputFormat.TABLE.value
+    JSON = OutputFormat.JSON.value
+
+
+LeaderboardFormatOpt = Annotated[
     OutputFormat,
+    typer.Option(
+        "--format",
+        "-f",
+        help="Output format: table, csv, json, model",
+        case_sensitive=False,
+    ),
+]
+StatusFormatOpt = Annotated[
+    _StatusOutputFormat,
     typer.Option(
         "--format",
         "-f",
@@ -80,6 +121,14 @@ SessionOpt = Annotated[
         envvar="AOC_SESSION",
     ),
 ]
+OutputPathOpt = Annotated[
+    Path | None,
+    typer.Option(
+        "--output",
+        "-o",
+        help="Destination path (defaults to YEAR/dayDD.py)",
+    ),
+]
 
 
 def handle_cli_errors(func):
@@ -89,18 +138,16 @@ def handle_cli_errors(func):
             return func(*args, **kwargs)
         except typer.Exit:
             raise
-        except KeyboardInterrupt:
-            raise typer.Exit(code=130)
+        except KeyboardInterrupt as exc:
+            raise typer.Exit(code=130) from exc
         except ElfError as exc:
             if _DEBUG:
                 raise
-            error_console.print(f"[red]❄️ {exc}[/red]")
+            error_console.print(Text(f"❄️ {exc}", style="red"))
         except Exception as exc:
             if _DEBUG:
                 raise
-            error_console.print(
-                f"[red]Unexpected {exc.__class__.__name__}: {exc}[/red]"
-            )
+            error_console.print(Text(f"Unexpected {exc.__class__.__name__}: {exc}", style="red"))
         raise typer.Exit(code=1)
 
     return wrapper
@@ -145,20 +192,20 @@ def cli_root(
 @handle_cli_errors
 def input_cmd(
     year: YearArg,
-    day: DayArg,
+    day: DefaultDayArg = None,
     session: SessionOpt = None,
 ) -> None:
     """
     Fetch the input for a given year and day.
     """
-    input_data = get_input(year, day, session)
+    input_data = get_input(year, day or default_event_day(year), session)
     typer.echo(input_data, nl=False)
 
 
 @app.command("answer")
 @handle_cli_errors
 def answer_cmd(
-    year: YearArg,
+    year: RequiredYearArg,
     day: DayArg,
     part: PartArg,
     answer: AnswerArg,
@@ -175,7 +222,7 @@ def answer_cmd(
         answer=answer,
         session=session,
     )
-    console.print(submit_result.message)
+    console.print(Text(submit_result.message))
     exit_code = 0
     if submit_result.result is SubmissionStatus.WAIT:
         exit_code = 2
@@ -190,14 +237,14 @@ def answer_cmd(
 @app.command("leaderboard")
 @handle_cli_errors
 def leaderboard_cmd(
-    year: YearArg,
+    year: RequiredYearArg,
     board_id: Annotated[int, typer.Argument(help="Private leaderboard ID")],
     view_key: Annotated[
         str | None,
         typer.Option(help="View key for the private leaderboard, if required"),
     ] = None,
     session: SessionOpt = None,
-    output_format: FormatOpt = OutputFormat.TABLE,
+    output_format: LeaderboardFormatOpt = OutputFormat.TABLE,
 ) -> None:
     """
     Fetch and display a private leaderboard for a given year.
@@ -210,19 +257,20 @@ def leaderboard_cmd(
         fmt=output_format,
     )
 
-    console.print(leaderboard_data)
+    _print_formatted_output(leaderboard_data, output_format)
 
 
 @app.command("guesses")
 @handle_cli_errors
 def guesses_cmd(
     year: YearArg,
-    day: DayArg,
+    day: DefaultDayArg = None,
+    session: SessionOpt = None,
 ) -> None:
     """
     Display cached guesses for a given year and day.
     """
-    guesses_data = get_guesses(year, day)
+    guesses_data = get_guesses(year, day or default_event_day(year), session)
     console.print(guesses_data)
 
 
@@ -231,25 +279,26 @@ def guesses_cmd(
 def status_cmd(
     year: YearArg,
     session: SessionOpt = None,
-    output_format: FormatOpt = OutputFormat.TABLE,
+    output_format: StatusFormatOpt = _StatusOutputFormat.TABLE,
 ) -> None:
     """
     Fetch and display your Advent of Code status for a given year.
     """
+    resolved_format = OutputFormat(output_format.value)
     status_data = get_status(
         year=year,
         session=session,
-        fmt=output_format,
+        fmt=resolved_format,
     )
 
-    console.print(status_data)
+    _print_formatted_output(status_data, resolved_format)
 
 
 @app.command("open")
 @handle_cli_errors
 def open_cmd(
     year: YearArg,
-    day: DayArg,
+    day: DefaultDayArg = None,
     kind: Annotated[
         OpenKind,
         typer.Option(
@@ -263,8 +312,20 @@ def open_cmd(
     """
     Open an Advent of Code page (puzzle, input, or website) in the default web browser.
     """
-    open_msg = open_page(year, day, kind)
+    open_msg = open_page(year, day or default_event_day(year), kind)
     console.print(open_msg)
+
+
+@app.command("new")
+@handle_cli_errors
+def new_cmd(
+    year: RequiredYearArg,
+    day: DayArg,
+    output: OutputPathOpt = None,
+) -> None:
+    """Create an interactive Python solution file for a puzzle."""
+    destination = create_day_template(year, day, output)
+    console.print(Text(f"Created {destination}", style="green"))
 
 
 @app.command("cache")
@@ -283,6 +344,16 @@ def cache_cmd() -> None:
     console.print(f"[green]Cache directory:[/green] {cache_dir}")
     console.print(f"[green]Cached files:[/green] {len(files)}")
     console.print("[dim]To clear the cache, delete this directory manually.[/dim]")
+
+
+@app.command("doctor")
+@handle_cli_errors
+def doctor_cmd() -> None:
+    """Check local configuration without contacting Advent of Code."""
+    report = run_doctor()
+    console.print(format_doctor_report(report))
+    if report.has_errors:
+        raise typer.Exit(code=1)
 
 
 def main() -> None:

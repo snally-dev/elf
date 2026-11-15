@@ -1,12 +1,18 @@
 import httpx
 
 from .aoc_client import AOCClient
-from .cache import get_cache_input_file
+from .cache import (
+    atomic_write_text,
+    get_cache_input_file,
+    migrate_legacy_cache_file,
+)
+from .events import validate_event_day
 from .exceptions import InputFetchError, PuzzleLockedError
 from .utils import (
     current_aoc_year,
     get_unlock_status,
     handle_http_errors,
+    looks_like_login_content,
     looks_like_login_page,
     resolve_session,
 )
@@ -29,15 +35,21 @@ def get_input(year: int, day: int, session: str | None) -> str:
         InputFetchError: If there is an issue fetching the puzzle input.
         ValueError: If the year/day are out of range.
     """
-    if not 1 <= day <= 25:
-        raise ValueError(f"Invalid day {day!r}. Advent of Code days are 1–25.")
+    validate_event_day(year, day)
 
-    if year < 2015:
-        raise ValueError(f"Invalid year {year!r}. Advent of Code started in 2015.")
+    session_token = resolve_session(session)
+    legacy_cache_file = get_cache_input_file(year, day)
+    cache_file = get_cache_input_file(year, day, session_token)
 
-    cache_file = get_cache_input_file(year, day)
-    if cache_file.exists():
-        return cache_file.read_text(encoding="utf-8")
+    try:
+        migrate_legacy_cache_file(legacy_cache_file, cache_file)
+        if cache_file.exists():
+            cached_input = cache_file.read_text(encoding="utf-8")
+            if not looks_like_login_content(cached_input):
+                return cached_input
+    except (OSError, UnicodeError):
+        # A damaged or inaccessible cache should not prevent a fresh fetch.
+        pass
 
     if year >= current_aoc_year():
         status = get_unlock_status(year, day)
@@ -48,8 +60,6 @@ def get_input(year: int, day: int, session: str | None) -> str:
                 now=status.now,
                 unlock_time=status.unlock_time,
             )
-
-    session_token = resolve_session(session)
 
     # --- Network layer --------------------------------------------------------
 
@@ -63,9 +73,7 @@ def get_input(year: int, day: int, session: str | None) -> str:
         ) from exc
 
     except httpx.RequestError as exc:
-        raise InputFetchError(
-            f"Network error while connecting to Advent of Code: {exc}"
-        ) from exc
+        raise InputFetchError(f"Network error while connecting to Advent of Code: {exc}") from exc
 
     # --- HTTP status handling -------------------------------------------------
     handle_http_errors(
@@ -73,7 +81,10 @@ def get_input(year: int, day: int, session: str | None) -> str:
         exc_cls=InputFetchError,
         not_found_message=f"Input not found for year={year}, day={day} (HTTP 404).",
         bad_request_message="Bad request (HTTP 400). Your session token may be invalid.",
-        server_error_message="Server error from Advent of Code (HTTP {status_code}). Your session token may be invalid.",
+        server_error_message=(
+            "Server error from Advent of Code (HTTP {status_code}). "
+            "Your session token may be invalid."
+        ),
         unexpected_status_message="Unexpected HTTP error: {status_code}.",
     )
 
@@ -87,8 +98,9 @@ def get_input(year: int, day: int, session: str | None) -> str:
 
     input_data = text
 
-    # Ensure the cache directory exists
-    cache_file.parent.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(input_data, encoding="utf-8")
+    try:
+        atomic_write_text(cache_file, input_data)
+    except OSError as exc:
+        raise InputFetchError(f"Failed to cache puzzle input at {cache_file}.") from exc
 
     return input_data

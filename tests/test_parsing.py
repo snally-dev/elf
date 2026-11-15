@@ -1,7 +1,12 @@
-from elf import DayStatus
+from pathlib import Path
+
+import pytest
+
 from elf.leaderboard import format_leaderboard_as_table
 from elf.models import Leaderboard
 from elf.status import build_year_status_table, parse_login_state, parse_year_status
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_leaderboard_model_accepts_string_keys_and_formats_table():
@@ -90,3 +95,41 @@ def test_status_parsing_handles_basic_calendar_html():
     table = build_year_status_table(status)
     assert table.row_count == 4
     assert table.title and "2025" in table.title
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "year", "username", "expected_days"),
+    [
+        ("status_2015.html", 2015, "archive-user", [(1, 2, False), (2, 1, False), (25, 0, True)]),
+        ("status_2024.html", 2024, "current-user", [(1, 2, False), (2, 0, False), (25, 0, True)]),
+        ("status_2025.html", 2025, "reduced-user", [(1, 1, False), (12, 0, True)]),
+    ],
+)
+def test_status_parser_handles_sanitized_historical_fixtures(
+    fixture_name, year, username, expected_days
+):
+    html = (FIXTURES / fixture_name).read_text(encoding="utf-8")
+
+    assert parse_login_state(html) is True
+    status = parse_year_status(html)
+
+    assert status.year == year
+    assert status.username == username
+    assert [(day.day, day.stars, day.is_locked) for day in status.days] == expected_days
+
+
+def test_status_parser_does_not_depend_on_calendar_class_order():
+    html = """
+    <header><div class="user">elf <span class="star-count">2*</span></div>
+      <a href="/settings">Settings</a></header>
+    <h1 class="title-event"><a>2024</a></h1>
+    <pre class="calendar">
+      <a class="calendar-verycomplete calendar-day1" href="/2024/day/1">
+        <span class="calendar-day">1</span>
+      </a>
+    </pre>
+    """
+
+    status = parse_year_status(html)
+
+    assert [(day.day, day.stars, day.is_locked) for day in status.days] == [(1, 2, False)]

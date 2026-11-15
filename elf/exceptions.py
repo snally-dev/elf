@@ -37,6 +37,10 @@ class SubmissionError(ElfError):
         super().__init__(message or default)
 
 
+class TemplateCreationError(ElfError):
+    """Raised when a puzzle template cannot be created safely."""
+
+
 class MissingSessionTokenError(ElfError):
     """Raised when the Advent of Code session token is missing."""
 

@@ -1,6 +1,6 @@
 [project]
 name = "elf"
-version = "1.1.1"
+version = "1.2.0"
 description = "Advent of Code helper for Python: fetch and cache inputs, submit answers, and pull private leaderboards."
 readme = "README.md"
 license = "MIT"
@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.12.4",
     "rich>=14.2.0",
     "typer>=0.20.0",
+    "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 keywords = [
@@ -40,10 +41,11 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/cak/elf"
-Documentation = "https://github.com/cak/elf/"
-Repository = "https://github.com/cak/elf"
-Issue-Tracker = "https://github.com/cak/elf/issues"
+Homepage = "https://github.com/snally-dev/elf"
+Documentation = "https://github.com/snally-dev/elf/"
+Repository = "https://github.com/snally-dev/elf"
+Issue-Tracker = "https://github.com/snally-dev/elf/issues"
+Changelog = "https://github.com/snally-dev/elf/blob/main/CHANGELOG.md"
 
 [project.scripts]
 elf = "elf.cli:main"
@@ -52,7 +54,7 @@ elf = "elf.cli:main"
 include = ["elf*"]
 
 [tool.setuptools.package-data]
-elf = ["py.typed"]
+elf = ["py.typed", "templates/*.py"]
 
 [build-system]
 requires = ["setuptools>=77", "wheel"]
@@ -60,5 +62,19 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
+    "mypy>=1.19.0",
     "pytest>=9.0.1",
+    "ruff>=0.14.0",
 ]
+
+[tool.mypy]
+files = ["elf"]
+python_version = "3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "BLE", "E", "F", "I", "PYI", "RUF012", "RUF022", "SIM", "UP"]
+ignore = ["UP042"]

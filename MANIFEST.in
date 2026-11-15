@@ -1,0 +1,4 @@
+include CHANGELOG.md
+include elf/templates/day_template.py
+include tests/conftest.py
+recursive-include tests/fixtures *.html
