@@ -1,3 +1,4 @@
+from enum import Enum
 from functools import wraps
 from typing import Annotated
 
@@ -30,8 +31,10 @@ _DEBUG = False
 
 
 def _print_formatted_output(data: object, output_format: OutputFormat) -> None:
-    """Keep JSON byte-for-byte intact while allowing Rich renderables elsewhere."""
-    if output_format is OutputFormat.JSON and isinstance(data, str):
+    """Print machine-readable strings without Rich interpretation."""
+    if output_format is OutputFormat.CSV and isinstance(data, str):
+        typer.echo(data, nl=False)
+    elif output_format is OutputFormat.JSON and isinstance(data, str):
         typer.echo(data)
     else:
         console.print(data)
@@ -81,8 +84,25 @@ PartArg = Annotated[
     ),
 ]
 AnswerArg = Annotated[str, typer.Argument(help="Your answer to submit")]
-FormatOpt = Annotated[
+
+
+class _StatusOutputFormat(str, Enum):
+    MODEL = OutputFormat.MODEL.value
+    TABLE = OutputFormat.TABLE.value
+    JSON = OutputFormat.JSON.value
+
+
+LeaderboardFormatOpt = Annotated[
     OutputFormat,
+    typer.Option(
+        "--format",
+        "-f",
+        help="Output format: table, csv, json, model",
+        case_sensitive=False,
+    ),
+]
+StatusFormatOpt = Annotated[
+    _StatusOutputFormat,
     typer.Option(
         "--format",
         "-f",
@@ -214,7 +234,7 @@ def leaderboard_cmd(
         typer.Option(help="View key for the private leaderboard, if required"),
     ] = None,
     session: SessionOpt = None,
-    output_format: FormatOpt = OutputFormat.TABLE,
+    output_format: LeaderboardFormatOpt = OutputFormat.TABLE,
 ) -> None:
     """
     Fetch and display a private leaderboard for a given year.
@@ -249,18 +269,19 @@ def guesses_cmd(
 def status_cmd(
     year: YearArg,
     session: SessionOpt = None,
-    output_format: FormatOpt = OutputFormat.TABLE,
+    output_format: StatusFormatOpt = _StatusOutputFormat.TABLE,
 ) -> None:
     """
     Fetch and display your Advent of Code status for a given year.
     """
+    resolved_format = OutputFormat(output_format.value)
     status_data = get_status(
         year=year,
         session=session,
-        fmt=output_format,
+        fmt=resolved_format,
     )
 
-    _print_formatted_output(status_data, output_format)
+    _print_formatted_output(status_data, resolved_format)
 
 
 @app.command("open")
