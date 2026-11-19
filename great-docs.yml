@@ -94,7 +94,7 @@ dynamic: true
 # Canonical address of the deployed docs site. Used for skills-page install
 # commands, .well-known/ discovery, sitemaps, and subdirectory deployments;
 # also sets website.site-url in _quarto.yml.
-# site_url: null
+site_url: "https://snally.com/dev/"
 
 # Source Link Configuration
 # -------------------------
@@ -184,11 +184,11 @@ dynamic: true
 authors:
   - name: cak
     role: Author
-    # affiliation: 
+    # affiliation:
     email: cak@typeerror.com
-    # github: 
-    # orcid: 
-    # homepage: 
+    # github:
+    # orcid:
+    # homepage:
 
 # Funding
 # -------
@@ -748,3 +748,7 @@ reference:
 #     enabled: true              # Add JSON-LD to pages
 #     type: SoftwareSourceCode   # Schema.org type
 #   default_description: null   # Falls back to the package description when null
+
+seo:
+  canonical:
+    base_url: "https://snally.com/dev/"
