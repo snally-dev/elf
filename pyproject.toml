@@ -42,7 +42,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/snally-dev/elf"
-Documentation = "https://github.com/snally-dev/elf/"
+Documentation = "https://snally.com/elf/"
 Repository = "https://github.com/snally-dev/elf"
 Issue-Tracker = "https://github.com/snally-dev/elf/issues"
 Changelog = "https://github.com/snally-dev/elf/blob/main/CHANGELOG.md"

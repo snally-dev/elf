@@ -6,6 +6,9 @@ on:
       - main
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build-docs:
     name: "Build Docs"
@@ -14,6 +17,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0 # Full history for accurate page timestamps
+          persist-credentials: false
 
       - uses: actions/setup-python@v6
         with:
@@ -22,11 +26,12 @@ jobs:
       - name: Install package and dependencies
         run: |
           python -m pip install uv
-          uv sync
-          uv pip install great-docs
+          uv sync --locked
 
       - name: Set up Quarto
         uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: "1.9.38"
 
       - name: Build docs
         run: uv run great-docs build
@@ -40,7 +45,7 @@ jobs:
 
       - name: How to preview this build locally
         if: github.event_name == 'pull_request'
-        run: great-docs ci notice --run ${{ github.run_id }} --pr ${{ github.event.number }}
+        run: uv run great-docs ci notice --run ${{ github.run_id }} --pr ${{ github.event.number }}
 
       - name: Upload build timings
         uses: actions/upload-artifact@v7

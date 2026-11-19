@@ -94,7 +94,7 @@ dynamic: true
 # Canonical address of the deployed docs site. Used for skills-page install
 # commands, .well-known/ discovery, sitemaps, and subdirectory deployments;
 # also sets website.site-url in _quarto.yml.
-site_url: "https://snally.com/dev/"
+site_url: "https://snally.com/elf/"
 
 # Source Link Configuration
 # -------------------------
@@ -366,7 +366,7 @@ reference:
   - title: Dataclasses
     desc: Dataclass definitions
     contents:
-      - SubmissionResult  # 1 method(s)
+      - SubmissionResult # 1 method(s)
 
   - title: Enumerations
     desc: Enumeration types
@@ -751,4 +751,4 @@ reference:
 
 seo:
   canonical:
-    base_url: "https://snally.com/dev/"
+    base_url: "https://snally.com/elf/"
